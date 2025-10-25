@@ -15,7 +15,7 @@ import net.minecraft.util.math.Vec3d
 import net.minecraft.world.World
 
 class MegaZombieEntity(entityType: EntityType<out ZombieEntity>, world: World) : ZombieEntity(entityType, world) {
-    private var spawnCooldown = COOLDOWN_TICKS
+    private var spawnCooldown = 0
 
     override fun tick() {
         super.tick()
@@ -38,14 +38,12 @@ class MegaZombieEntity(entityType: EntityType<out ZombieEntity>, world: World) :
     private fun spawnZombiesAround(center: Vec3d) {
         val serverWorld = world as? ServerWorld ?: return
 
-        val positions = listOf(
-            Vec3d(2.0, 0.0, 0.0),
-            Vec3d(-2.0, 0.0, 0.0),
-            Vec3d(0.0, 0.0, 2.0),
-            Vec3d(0.0, 0.0, -2.0)
-        )
+        val offsets = listOf(0, 60, 120, 180, 240, 300).map { angleDegrees ->
+            val radians = Math.toRadians(angleDegrees.toDouble())
+            Vec3d(Math.cos(radians) * SPAWN_RADIUS, 0.0, Math.sin(radians) * SPAWN_RADIUS)
+        }
 
-        positions.forEach { offset ->
+        offsets.forEach { offset ->
             val spawnPos = BlockPos.ofFloored(center.add(offset))
             val zombie = EntityType.ZOMBIE.create(serverWorld)
             if (zombie != null) {
@@ -72,6 +70,7 @@ class MegaZombieEntity(entityType: EntityType<out ZombieEntity>, world: World) :
         private const val COOLDOWN_SECONDS = 30
         private const val TICKS_PER_SECOND = 20
         private const val COOLDOWN_TICKS = COOLDOWN_SECONDS * TICKS_PER_SECOND
+        private const val SPAWN_RADIUS = 2.0
         fun createMegaZombieAttributes(): DefaultAttributeContainer.Builder =
             ZombieEntity.createZombieAttributes()
                 .add(EntityAttributes.GENERIC_MAX_HEALTH, DEFAULT_ZOMBIE_HEALTH * HEALTH_MULTIPLIER)

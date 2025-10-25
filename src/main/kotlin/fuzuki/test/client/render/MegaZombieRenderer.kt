@@ -6,6 +6,8 @@ import net.minecraft.client.render.entity.ZombieBaseEntityRenderer
 import net.minecraft.client.render.entity.model.EntityModelLayers
 import net.minecraft.client.render.entity.model.ZombieEntityModel
 import net.minecraft.client.util.math.MatrixStack
+import net.minecraft.entity.mob.ZombieEntity
+import net.minecraft.util.Identifier
 
 class MegaZombieRenderer(context: EntityRendererFactory.Context) :
     ZombieBaseEntityRenderer<MegaZombieEntity, ZombieEntityModel<MegaZombieEntity>>(
@@ -20,7 +22,10 @@ class MegaZombieRenderer(context: EntityRendererFactory.Context) :
         super.scale(entity, matrices, amount)
     }
 
+    override fun getTexture(entity: ZombieEntity): Identifier = TEXTURE
+
     companion object {
         private const val SCALE = 1.5f
+        private val TEXTURE: Identifier = Identifier.of("mod_de_leo", "textures/entity/mega_zombie.png")
     }
 }
