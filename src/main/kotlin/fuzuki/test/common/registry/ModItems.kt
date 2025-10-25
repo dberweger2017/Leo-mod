@@ -20,10 +20,23 @@ object ModItems {
         )
     )
 
+    val MEGA_ZOMBIE_SPAWN_EGG: Item = register(
+        "mega_zombie_spawn_egg",
+        SpawnEggItem(
+            ModEntityTypes.MEGA_ZOMBIE,
+            0x799c65,
+            0x1b331a,
+            Item.Settings()
+        )
+    )
+
     private fun register(id: String, item: Item): Item =
         Registry.register(Registries.ITEM, Identifier.of(MOD_ID, id), item)
 
     fun register() {
-        ItemGroupEvents.modifyEntriesEvent(ItemGroups.SPAWN_EGGS).register { it.add(SUPER_CREEPER_SPAWN_EGG) }
+        ItemGroupEvents.modifyEntriesEvent(ItemGroups.SPAWN_EGGS).register {
+            it.add(SUPER_CREEPER_SPAWN_EGG)
+            it.add(MEGA_ZOMBIE_SPAWN_EGG)
+        }
     }
 }

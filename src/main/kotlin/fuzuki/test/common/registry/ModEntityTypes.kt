@@ -1,13 +1,15 @@
 package fuzuki.test.common.registry
 
 import fuzuki.test.common.MOD_ID
+import fuzuki.test.common.entity.MegaZombieEntity
 import fuzuki.test.common.entity.SuperCreeperEntity
-import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricEntityTypeBuilder
 import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricDefaultAttributeRegistry
+import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricEntityTypeBuilder
 import net.minecraft.entity.EntityDimensions
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnGroup
 import net.minecraft.entity.mob.CreeperEntity
+import net.minecraft.entity.mob.ZombieEntity
 import net.minecraft.registry.Registries
 import net.minecraft.registry.Registry
 import net.minecraft.util.Identifier
@@ -23,7 +25,18 @@ object ModEntityTypes {
             .build()
     )
 
+    val MEGA_ZOMBIE: EntityType<MegaZombieEntity> = Registry.register(
+        Registries.ENTITY_TYPE,
+        Identifier.of(MOD_ID, "mega_zombie"),
+        FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::MegaZombieEntity)
+            .dimensions(EntityDimensions.changing(0.6f * 2, 1.95f * 2))
+            .trackRangeBlocks(8)
+            .trackedUpdateRate(3)
+            .build()
+    )
+
     fun register() {
         FabricDefaultAttributeRegistry.register(SUPER_CREEPER, CreeperEntity.createCreeperAttributes())
+        FabricDefaultAttributeRegistry.register(MEGA_ZOMBIE, MegaZombieEntity.createMegaZombieAttributes())
     }
 }
