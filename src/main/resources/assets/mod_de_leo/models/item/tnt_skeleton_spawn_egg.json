@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "mod_de_leo:item/tnt_skeleton_spawn_egg"
+  }
+}

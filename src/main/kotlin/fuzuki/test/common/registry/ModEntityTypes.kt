@@ -10,7 +10,6 @@ import net.minecraft.entity.EntityDimensions
 import net.minecraft.entity.EntityType
 import net.minecraft.entity.SpawnGroup
 import net.minecraft.entity.mob.CreeperEntity
-import net.minecraft.entity.mob.AbstractSkeletonEntity
 import net.minecraft.entity.mob.ZombieEntity
 import net.minecraft.registry.Registries
 import net.minecraft.registry.Registry
@@ -50,6 +49,6 @@ object ModEntityTypes {
     fun register() {
         FabricDefaultAttributeRegistry.register(SUPER_CREEPER, CreeperEntity.createCreeperAttributes())
         FabricDefaultAttributeRegistry.register(MEGA_ZOMBIE, MegaZombieEntity.createMegaZombieAttributes())
-        FabricDefaultAttributeRegistry.register(TNT_SKELETON, AbstractSkeletonEntity.createAbstractSkeletonAttributes())
+        FabricDefaultAttributeRegistry.register(TNT_SKELETON, TntSkeletonEntity.createAttributes())
     }
 }
