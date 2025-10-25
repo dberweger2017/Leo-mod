@@ -1,0 +1,6 @@
+{
+  "parent": "block/cube_all",
+  "textures": {
+    "all": "kotlin_test:block/block_test_4"
+  }
+}

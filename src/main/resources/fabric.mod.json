@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "kotlinblank",
+  "version": "${version}",
+  "name": "Kotlin Blank",
+  "description": "Minimal Kotlin Fabric mod",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      {
+        "adapter": "kotlin",
+        "value": "fuzuki.test.common.Main"
+      }
+    ],
+    "client": [
+      {
+        "adapter": "kotlin",
+        "value": "fuzuki.test.client.Main"
+      }
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.17.3",
+    "minecraft": "1.21.1",
+    "fabric-language-kotlin": ">=1.13.7+kotlin.2.2.21",
+    "fabric-api": ">=0.116.7+1.21.1"
+  }
+}

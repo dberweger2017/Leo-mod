@@ -1,0 +1,14 @@
+{
+  "variants": {
+    "colour=0,colour_fixed=false": { "model": "kotlin_test:block/block_test_0" },
+    "colour=1,colour_fixed=false": { "model": "kotlin_test:block/block_test_1" },
+    "colour=2,colour_fixed=false": { "model": "kotlin_test:block/block_test_2" },
+    "colour=3,colour_fixed=false": { "model": "kotlin_test:block/block_test_3" },
+    "colour=4,colour_fixed=false": { "model": "kotlin_test:block/block_test_4" },
+    "colour=0,colour_fixed=true": { "model": "kotlin_test:block/block_test_1" },
+    "colour=1,colour_fixed=true": { "model": "kotlin_test:block/block_test_2" },
+    "colour=2,colour_fixed=true": { "model": "kotlin_test:block/block_test_3" },
+    "colour=3,colour_fixed=true": { "model": "kotlin_test:block/block_test_4" },
+    "colour=4,colour_fixed=true": { "model": "kotlin_test:block/block_test_0" }
+  }
+}
