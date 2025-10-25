@@ -1,0 +1,29 @@
+package fuzuki.test.common.registry
+
+import fuzuki.test.common.MOD_ID
+import fuzuki.test.common.entity.SuperCreeperEntity
+import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricEntityTypeBuilder
+import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricDefaultAttributeRegistry
+import net.minecraft.entity.EntityDimensions
+import net.minecraft.entity.EntityType
+import net.minecraft.entity.SpawnGroup
+import net.minecraft.entity.mob.CreeperEntity
+import net.minecraft.registry.Registries
+import net.minecraft.registry.Registry
+import net.minecraft.util.Identifier
+
+object ModEntityTypes {
+    val SUPER_CREEPER: EntityType<SuperCreeperEntity> = Registry.register(
+        Registries.ENTITY_TYPE,
+        Identifier.of(MOD_ID, "super_creeper"),
+        FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::SuperCreeperEntity)
+            .dimensions(EntityDimensions.fixed(0.6f, 1.7f))
+            .trackRangeBlocks(8)
+            .trackedUpdateRate(3)
+            .build()
+    )
+
+    fun register() {
+        FabricDefaultAttributeRegistry.register(SUPER_CREEPER, CreeperEntity.createCreeperAttributes())
+    }
+}

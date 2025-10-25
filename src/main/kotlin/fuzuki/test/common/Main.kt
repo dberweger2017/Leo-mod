@@ -1,14 +1,21 @@
 package fuzuki.test.common
 
+import fuzuki.test.common.registry.ModEntityTypes
+import fuzuki.test.common.registry.ModItems
 import net.fabricmc.api.ModInitializer
 import org.slf4j.LoggerFactory
 
+const val MOD_ID = "mod_de_leo"
+
 class Main : ModInitializer {
     override fun onInitialize() {
+        ModEntityTypes.register()
+        ModItems.register()
+
         LOGGER.info("Mod de Leo initialized")
     }
 
     companion object {
-        private val LOGGER = LoggerFactory.getLogger("mod_de_leo")
+        private val LOGGER = LoggerFactory.getLogger(MOD_ID)
     }
 }

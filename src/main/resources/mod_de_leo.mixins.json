@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "package": "fuzuki.test.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "CreeperEntityAccessor"
+  ],
+  "client": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
