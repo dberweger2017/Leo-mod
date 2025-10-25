@@ -14,9 +14,7 @@ import net.minecraft.entity.passive.IronGolemEntity
 import net.minecraft.entity.passive.TurtleEntity
 import net.minecraft.entity.passive.WolfEntity
 import net.minecraft.entity.player.PlayerEntity
-import net.minecraft.item.BowItem
 import net.minecraft.item.ItemStack
-import net.minecraft.item.Items
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.sound.SoundEvents
 import net.minecraft.util.math.Vec3d
@@ -25,19 +23,21 @@ import net.minecraft.world.Difficulty
 import net.minecraft.world.LocalDifficulty
 import net.minecraft.world.ServerWorldAccess
 import net.minecraft.world.World
-import net.minecraft.entity.projectile.ProjectileUtil
 import java.util.EnumSet
 
 class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: World) :
     SkeletonEntity(entityType, world) {
 
-    private val tntGoal = TntRangedAttackGoal(this, 1.0, HARD_ATTACK_INTERVAL, EXTENDED_RANGE)
+    private lateinit var tntGoal: TntRangedAttackGoal
 
     override fun initGoals() {
         goalSelector.add(1, FleeEntityGoal(this, PlayerEntity::class.java, CLOSE_RANGE_FLEE_DISTANCE, 1.3, 1.6))
         goalSelector.add(2, AvoidSunlightGoal(this))
         goalSelector.add(3, EscapeSunlightGoal(this, 1.0))
         goalSelector.add(3, FleeEntityGoal(this, WolfEntity::class.java, 6.0f, 1.0, 1.2))
+        tntGoal = TntRangedAttackGoal(this, 1.0, HARD_ATTACK_INTERVAL, EXTENDED_RANGE).also {
+            it.setControls(EnumSet.of(Goal.Control.MOVE, Goal.Control.LOOK))
+        }
         goalSelector.add(4, tntGoal)
         goalSelector.add(5, WanderAroundFarGoal(this, 1.0))
         goalSelector.add(6, LookAtEntityGoal(this, PlayerEntity::class.java, EXTENDED_LOOK_RANGE))
@@ -50,17 +50,23 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
     }
 
     override fun updateAttackType() {
-        // Do nothing: we manage our custom ranged goal manually
+        if (!::tntGoal.isInitialized || world.isClient) {
+            return
+        }
+        tntGoal.resetAttackInterval(world.difficulty)
     }
 
     override fun initEquipment(random: Random, localDifficulty: LocalDifficulty) {
         super.initEquipment(random, localDifficulty)
-        equipStack(EquipmentSlot.MAINHAND, ItemStack(Items.BOW))
+        equipStack(EquipmentSlot.MAINHAND, ItemStack.EMPTY)
+        setCanPickUpLoot(false)
     }
 
     override fun initialize(world: ServerWorldAccess, difficulty: LocalDifficulty, spawnReason: SpawnReason, entityData: EntityData?): EntityData? {
         val data = super.initialize(world, difficulty, spawnReason, entityData)
-        tntGoal.resetAttackInterval(difficulty.globalDifficulty)
+        if (::tntGoal.isInitialized) {
+            tntGoal.resetAttackInterval(difficulty.globalDifficulty)
+        }
         return data
     }
 
@@ -110,14 +116,15 @@ private class TntRangedAttackGoal(
         setControls(EnumSet.of(Control.MOVE, Control.LOOK))
     }
 
-    override fun canStart(): Boolean = skeleton.target != null && skeleton.isHolding(Items.BOW)
+    override fun canStart(): Boolean = skeleton.target != null
 
-    override fun shouldContinue(): Boolean = (canStart() || !skeleton.navigation.isIdle) && skeleton.isHolding(Items.BOW)
+    override fun shouldContinue(): Boolean = canStart() || !skeleton.navigation.isIdle
 
     override fun shouldRunEveryTick(): Boolean = true
 
     override fun start() {
         skeleton.setAttacking(true)
+        cooldown = 0
     }
 
     override fun stop() {
@@ -160,20 +167,13 @@ private class TntRangedAttackGoal(
             skeleton.lookControl.lookAt(target, 30f, 30f)
         }
 
-        if (skeleton.isUsingItem) {
-            if (!canSee && targetSeeingTicker < -60) {
-                skeleton.clearActiveItem()
-            } else if (canSee) {
-                val useTime = skeleton.itemUseTime
-                if (useTime >= 20) {
-                    skeleton.clearActiveItem()
-                    val pullProgress = BowItem.getPullProgress(useTime)
-                    skeleton.shootTnt(target, pullProgress)
-                    cooldown = attackInterval
-                }
-            }
-        } else if (--cooldown <= 0 && targetSeeingTicker >= -60) {
-            skeleton.setCurrentHand(ProjectileUtil.getHandPossiblyHolding(skeleton, Items.BOW))
+        if (cooldown > 0) {
+            cooldown--
+        }
+
+        if (cooldown <= 0 && canSee && targetSeeingTicker >= 20) {
+            skeleton.shootTnt(target, 1.0f)
+            cooldown = attackInterval
         }
     }
 
