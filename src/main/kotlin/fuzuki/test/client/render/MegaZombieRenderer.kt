@@ -21,6 +21,6 @@ class MegaZombieRenderer(context: EntityRendererFactory.Context) :
     }
 
     companion object {
-        private const val SCALE = 2f
+        private const val SCALE = 1.5f
     }
 }

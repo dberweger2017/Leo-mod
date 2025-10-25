@@ -29,7 +29,7 @@ object ModEntityTypes {
         Registries.ENTITY_TYPE,
         Identifier.of(MOD_ID, "mega_zombie"),
         FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::MegaZombieEntity)
-            .dimensions(EntityDimensions.changing(0.6f * 2, 1.95f * 2))
+            .dimensions(EntityDimensions.changing(0.6f * 1.5f, 1.95f * 1.5f))
             .trackRangeBlocks(8)
             .trackedUpdateRate(3)
             .build()

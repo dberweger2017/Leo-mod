@@ -2,6 +2,7 @@ package fuzuki.test.common
 
 import fuzuki.test.common.registry.ModEntityTypes
 import fuzuki.test.common.registry.ModItems
+import fuzuki.test.common.world.ModSpawns
 import net.fabricmc.api.ModInitializer
 import org.slf4j.LoggerFactory
 
@@ -11,6 +12,7 @@ class Main : ModInitializer {
     override fun onInitialize() {
         ModEntityTypes.register()
         ModItems.register()
+        ModSpawns.register()
 
         LOGGER.info("Mod de Leo initialized")
     }
