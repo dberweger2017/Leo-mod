@@ -79,7 +79,8 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
         val f = target.z - z
         val direction = Vec3d(d, e, f).normalize()
         val speed = 0.6 + pullProgress * 0.4
-        tnt.velocity = direction.multiply(speed)
+        val velocity = direction.multiply(speed).add(0.0, VERTICAL_BOOST, 0.0)
+        tnt.velocity = velocity
         tnt.setFuse(DEFAULT_FUSE)
 
         serverWorld.spawnEntity(tnt)
@@ -93,6 +94,7 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
         const val EXTENDED_LOOK_RANGE = 20f
         const val HARD_ATTACK_INTERVAL = 20
         const val REGULAR_ATTACK_INTERVAL = 40
+        const val VERTICAL_BOOST = 0.15
 
         fun createAttributes() = AbstractSkeletonEntity.createAbstractSkeletonAttributes()
             .add(EntityAttributes.GENERIC_FOLLOW_RANGE, 48.0)
