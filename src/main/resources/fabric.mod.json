@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "kotlinblank",
+  "id": "mod_de_leo",
   "version": "${version}",
-  "name": "Kotlin Blank",
+  "name": "Mod de Leo",
   "description": "Minimal Kotlin Fabric mod",
   "environment": "*",
   "entrypoints": {
