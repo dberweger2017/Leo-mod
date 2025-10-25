@@ -33,7 +33,15 @@ object ModSpawns {
             ModEntityTypes.TNT_SKELETON,
             TNT_SKELETON_WEIGHT,
             1,
-            2
+            4
+        )
+        BiomeModifications.addSpawn(
+            BiomeSelectors.foundInOverworld(),
+            SpawnGroup.MONSTER,
+            ModEntityTypes.GYM_ZOMBIE,
+            GYM_ZOMBIE_WEIGHT,
+            1,
+            3
         )
 
         SpawnRestriction.register(
@@ -54,9 +62,16 @@ object ModSpawns {
             SpawnRestriction.getHeightmapType(EntityType.SKELETON),
             HostileEntity::canSpawnInDark
         )
+        SpawnRestriction.register(
+            ModEntityTypes.GYM_ZOMBIE,
+            SpawnRestriction.getLocation(EntityType.ZOMBIE),
+            SpawnRestriction.getHeightmapType(EntityType.ZOMBIE),
+            HostileEntity::canSpawnInDark
+        )
     }
 
     private const val MEGA_ZOMBIE_WEIGHT = 10
     private const val SUPER_CREEPER_WEIGHT = 10
     private const val TNT_SKELETON_WEIGHT = 10
+    private const val GYM_ZOMBIE_WEIGHT = 10
 }

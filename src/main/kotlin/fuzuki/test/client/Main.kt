@@ -1,5 +1,6 @@
 package fuzuki.test.client
 
+import fuzuki.test.client.render.GymZombieRenderer
 import fuzuki.test.client.render.MegaZombieRenderer
 import fuzuki.test.client.render.SuperCreeperRenderer
 import fuzuki.test.client.render.TntSkeletonRenderer
@@ -18,5 +19,6 @@ class Main : ClientModInitializer {
         EntityRendererRegistry.register(ModEntityTypes.TNT_SKELETON) { context ->
             TntSkeletonRenderer(context)
         }
+        EntityRendererRegistry.register(ModEntityTypes.GYM_ZOMBIE, ::GymZombieRenderer)
     }
 }

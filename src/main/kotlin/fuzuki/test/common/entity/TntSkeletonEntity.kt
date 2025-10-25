@@ -8,6 +8,7 @@ import net.minecraft.entity.SpawnReason
 import net.minecraft.entity.TntEntity
 import net.minecraft.entity.ai.goal.*
 import net.minecraft.entity.attribute.EntityAttributes
+import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.mob.AbstractSkeletonEntity
 import net.minecraft.entity.mob.SkeletonEntity
 import net.minecraft.entity.passive.IronGolemEntity
@@ -15,6 +16,7 @@ import net.minecraft.entity.passive.TurtleEntity
 import net.minecraft.entity.passive.WolfEntity
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.ItemStack
+import net.minecraft.registry.tag.DamageTypeTags
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.sound.SoundEvents
 import net.minecraft.util.math.Vec3d
@@ -85,6 +87,13 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
 
         serverWorld.spawnEntity(tnt)
         world.playSound(null, blockPos, SoundEvents.ENTITY_TNT_PRIMED, soundCategory, 1.0f, 1.0f)
+    }
+
+    override fun isInvulnerableTo(source: DamageSource): Boolean {
+        if (source.isIn(DamageTypeTags.IS_EXPLOSION)) {
+            return true
+        }
+        return super.isInvulnerableTo(source)
     }
 
     companion object {

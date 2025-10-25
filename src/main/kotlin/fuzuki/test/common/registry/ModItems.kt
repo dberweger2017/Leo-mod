@@ -30,6 +30,16 @@ object ModItems {
         )
     )
 
+    val GYM_ZOMBIE_SPAWN_EGG: Item = register(
+        "gym_zombie_spawn_egg",
+        SpawnEggItem(
+            ModEntityTypes.GYM_ZOMBIE,
+            0x4a7f2b,
+            0xcfcfcf,
+            Item.Settings()
+        )
+    )
+
     val TNT_SKELETON_SPAWN_EGG: Item = register(
         "tnt_skeleton_spawn_egg",
         SpawnEggItem(
@@ -47,6 +57,7 @@ object ModItems {
         ItemGroupEvents.modifyEntriesEvent(ItemGroups.SPAWN_EGGS).register {
             it.add(SUPER_CREEPER_SPAWN_EGG)
             it.add(MEGA_ZOMBIE_SPAWN_EGG)
+            it.add(GYM_ZOMBIE_SPAWN_EGG)
             it.add(TNT_SKELETON_SPAWN_EGG)
         }
     }
