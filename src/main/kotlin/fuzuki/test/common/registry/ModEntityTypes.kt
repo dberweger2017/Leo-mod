@@ -3,6 +3,7 @@ package fuzuki.test.common.registry
 import fuzuki.test.common.MOD_ID
 import fuzuki.test.common.entity.GymZombieEntity
 import fuzuki.test.common.entity.MegaZombieEntity
+import fuzuki.test.common.entity.SniperSkeletonEntity
 import fuzuki.test.common.entity.SuperCreeperEntity
 import fuzuki.test.common.entity.TntSkeletonEntity
 import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricDefaultAttributeRegistry
@@ -57,10 +58,21 @@ object ModEntityTypes {
             .build()
     )
 
+    val SNIPER_SKELETON: EntityType<SniperSkeletonEntity> = Registry.register(
+        Registries.ENTITY_TYPE,
+        Identifier.of(MOD_ID, "sniper_skeleton"),
+        FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::SniperSkeletonEntity)
+            .dimensions(EntityDimensions.fixed(0.6f, 1.99f))
+            .trackRangeBlocks(12)
+            .trackedUpdateRate(3)
+            .build()
+    )
+
     fun register() {
         FabricDefaultAttributeRegistry.register(SUPER_CREEPER, CreeperEntity.createCreeperAttributes())
         FabricDefaultAttributeRegistry.register(MEGA_ZOMBIE, MegaZombieEntity.createMegaZombieAttributes())
         FabricDefaultAttributeRegistry.register(GYM_ZOMBIE, GymZombieEntity.createGymZombieAttributes())
         FabricDefaultAttributeRegistry.register(TNT_SKELETON, TntSkeletonEntity.createAttributes())
+        FabricDefaultAttributeRegistry.register(SNIPER_SKELETON, SniperSkeletonEntity.createAttributes())
     }
 }

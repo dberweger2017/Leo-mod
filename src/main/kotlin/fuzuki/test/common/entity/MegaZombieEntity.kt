@@ -7,11 +7,14 @@ import net.minecraft.entity.attribute.DefaultAttributeContainer
 import net.minecraft.entity.attribute.EntityAttributes
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.mob.ZombieEntity
+import net.minecraft.item.ArmorItem
+import net.minecraft.item.Item
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
+import net.minecraft.world.LocalDifficulty
 import net.minecraft.world.World
 
 class MegaZombieEntity(entityType: EntityType<out ZombieEntity>, world: World) : ZombieEntity(entityType, world) {
@@ -82,5 +85,67 @@ class MegaZombieEntity(entityType: EntityType<out ZombieEntity>, world: World) :
         private const val DEFAULT_ZOMBIE_ATTACK = 3.0
         private const val HEALTH_MULTIPLIER = 2.0
         private const val DAMAGE_MULTIPLIER = 1.0
+
+        private fun pickArmorTier(random: net.minecraft.util.math.random.Random): ArmorTier {
+            val roll = random.nextInt(100)
+            return when {
+                roll < 40 -> ArmorTier.LEATHER
+                roll < 60 -> ArmorTier.CHAIN
+                roll < 80 -> ArmorTier.GOLD
+                roll < 95 -> ArmorTier.IRON
+                else -> ArmorTier.DIAMOND
+            }
+        }
+
+        private fun helmetFor(tier: ArmorTier): Item = when (tier) {
+            ArmorTier.LEATHER -> Items.LEATHER_HELMET
+            ArmorTier.CHAIN -> Items.CHAINMAIL_HELMET
+            ArmorTier.GOLD -> Items.GOLDEN_HELMET
+            ArmorTier.IRON -> Items.IRON_HELMET
+            ArmorTier.DIAMOND -> Items.DIAMOND_HELMET
+        }
+
+        private fun chestFor(tier: ArmorTier): Item = when (tier) {
+            ArmorTier.LEATHER -> Items.LEATHER_CHESTPLATE
+            ArmorTier.CHAIN -> Items.CHAINMAIL_CHESTPLATE
+            ArmorTier.GOLD -> Items.GOLDEN_CHESTPLATE
+            ArmorTier.IRON -> Items.IRON_CHESTPLATE
+            ArmorTier.DIAMOND -> Items.DIAMOND_CHESTPLATE
+        }
+
+        private fun legsFor(tier: ArmorTier): Item = when (tier) {
+            ArmorTier.LEATHER -> Items.LEATHER_LEGGINGS
+            ArmorTier.CHAIN -> Items.CHAINMAIL_LEGGINGS
+            ArmorTier.GOLD -> Items.GOLDEN_LEGGINGS
+            ArmorTier.IRON -> Items.IRON_LEGGINGS
+            ArmorTier.DIAMOND -> Items.DIAMOND_LEGGINGS
+        }
+
+        private fun bootsFor(tier: ArmorTier): Item = when (tier) {
+            ArmorTier.LEATHER -> Items.LEATHER_BOOTS
+            ArmorTier.CHAIN -> Items.CHAINMAIL_BOOTS
+            ArmorTier.GOLD -> Items.GOLDEN_BOOTS
+            ArmorTier.IRON -> Items.IRON_BOOTS
+            ArmorTier.DIAMOND -> Items.DIAMOND_BOOTS
+        }
+
+        private enum class ArmorTier {
+            LEATHER, CHAIN, GOLD, IRON, DIAMOND
+        }
+    }
+    override fun initEquipment(random: net.minecraft.util.math.random.Random, difficulty: LocalDifficulty) {
+        super.initEquipment(random, difficulty)
+
+        val tier = pickArmorTier(random)
+        equipStack(EquipmentSlot.HEAD, ItemStack(helmetFor(tier)))
+        equipStack(EquipmentSlot.CHEST, ItemStack(chestFor(tier)))
+        equipStack(EquipmentSlot.LEGS, ItemStack(legsFor(tier)))
+        equipStack(EquipmentSlot.FEET, ItemStack(bootsFor(tier)))
+
+        // optional: prevent easy farming by default
+        setEquipmentDropChance(EquipmentSlot.HEAD, 0f)
+        setEquipmentDropChance(EquipmentSlot.CHEST, 0f)
+        setEquipmentDropChance(EquipmentSlot.LEGS, 0f)
+        setEquipmentDropChance(EquipmentSlot.FEET, 0f)
     }
 }

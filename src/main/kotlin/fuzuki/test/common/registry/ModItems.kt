@@ -50,6 +50,16 @@ object ModItems {
         )
     )
 
+    val SNIPER_SKELETON_SPAWN_EGG: Item = register(
+        "sniper_skeleton_spawn_egg",
+        SpawnEggItem(
+            ModEntityTypes.SNIPER_SKELETON,
+            0xd7d7d7,
+            0x1f4a75,
+            Item.Settings()
+        )
+    )
+
     private fun register(id: String, item: Item): Item =
         Registry.register(Registries.ITEM, Identifier.of(MOD_ID, id), item)
 
@@ -59,6 +69,7 @@ object ModItems {
             it.add(MEGA_ZOMBIE_SPAWN_EGG)
             it.add(GYM_ZOMBIE_SPAWN_EGG)
             it.add(TNT_SKELETON_SPAWN_EGG)
+            it.add(SNIPER_SKELETON_SPAWN_EGG)
         }
     }
 }

@@ -7,6 +7,7 @@ import fuzuki.test.client.render.TntSkeletonRenderer
 import fuzuki.test.common.registry.ModEntityTypes
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry
+import net.minecraft.client.render.entity.SkeletonEntityRenderer
 
 class Main : ClientModInitializer {
     override fun onInitializeClient() {
@@ -20,5 +21,8 @@ class Main : ClientModInitializer {
             TntSkeletonRenderer(context)
         }
         EntityRendererRegistry.register(ModEntityTypes.GYM_ZOMBIE, ::GymZombieRenderer)
+        EntityRendererRegistry.register(ModEntityTypes.SNIPER_SKELETON) { context ->
+            SkeletonEntityRenderer(context)
+        }
     }
 }

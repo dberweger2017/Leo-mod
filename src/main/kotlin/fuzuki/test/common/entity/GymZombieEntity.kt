@@ -5,6 +5,7 @@ import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.attribute.DefaultAttributeContainer
 import net.minecraft.entity.attribute.EntityAttributes
 import net.minecraft.entity.mob.ZombieEntity
+import net.minecraft.util.math.Vec3d
 import net.minecraft.world.World
 
 class GymZombieEntity(entityType: EntityType<out GymZombieEntity>, world: World) : ZombieEntity(entityType, world) {
@@ -26,12 +27,27 @@ class GymZombieEntity(entityType: EntityType<out GymZombieEntity>, world: World)
     }
 
     private fun launchUpwards(entity: LivingEntity) {
-        entity.velocity = entity.velocity.add(0.0, VERTICAL_BOOST, 0.0)
+        val pushDistance = 10.0 + random.nextDouble() * 10.0
+        val direction = entity.pos.subtract(this.pos)
+        val horizontalDirection = if (direction.horizontalLengthSquared() > 1.0e-4) {
+            Vec3d(direction.x, 0.0, direction.z).normalize()
+        } else {
+            val angle = random.nextFloat() * (2.0 * Math.PI)
+            Vec3d(Math.cos(angle), 0.0, Math.sin(angle))
+        }
+
+        val horizontalBoost = pushDistance * HORIZONTAL_MULTIPLIER
+        entity.velocity = entity.velocity.add(
+            horizontalDirection.x * horizontalBoost,
+            VERTICAL_BOOST,
+            horizontalDirection.z * horizontalBoost
+        )
         entity.velocityModified = true
     }
 
     companion object {
-        private const val VERTICAL_BOOST = 14.0
+        private const val VERTICAL_BOOST = 1.1
+        private const val HORIZONTAL_MULTIPLIER = 0.6
 
         fun createGymZombieAttributes(): DefaultAttributeContainer.Builder =
             ZombieEntity.createZombieAttributes()

@@ -31,7 +31,9 @@ public abstract class MobEntityArmorBoostMixin {
     @Inject(method = "initEquipment", at = @At("TAIL"))
     private void mod_de_leo$boostArmor(Random random, LocalDifficulty difficulty, CallbackInfo ci) {
         MobEntity self = (MobEntity)(Object)this;
-        if (!(self instanceof HostileEntity)) {
+        if (!(self instanceof HostileEntity)
+            || self instanceof fuzuki.test.common.entity.MegaZombieEntity
+            || self instanceof fuzuki.test.common.entity.SniperSkeletonEntity) {
             return;
         }
 
