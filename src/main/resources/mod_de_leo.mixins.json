@@ -3,7 +3,9 @@
   "package": "fuzuki.test.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "CreeperEntityAccessor"
+    "CreeperEntityAccessor",
+    "TntEntityMixin",
+    "MobEntityArmorBoostMixin"
   ],
   "client": [],
   "injectors": {

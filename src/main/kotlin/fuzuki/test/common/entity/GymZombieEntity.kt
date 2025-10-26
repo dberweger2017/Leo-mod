@@ -19,8 +19,8 @@ class GymZombieEntity(entityType: EntityType<out GymZombieEntity>, world: World)
             launchUpwards(livingTarget)
             true
         } else {
-            val baseDamage = getAttributeValue(EntityAttributes.GENERIC_ATTACK_DAMAGE)
-            val dealt = livingTarget.damage(world.damageSources().mobAttack(this), (baseDamage * 2.0).toFloat())
+            val baseDamage = getAttributeValue(EntityAttributes.GENERIC_ATTACK_DAMAGE).toFloat()
+            val dealt = livingTarget.damage(damageSources.mobAttack(this), baseDamage * 2.0f)
             dealt
         }
     }

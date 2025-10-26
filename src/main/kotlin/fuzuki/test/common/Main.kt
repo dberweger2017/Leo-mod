@@ -11,7 +11,7 @@ const val MOD_ID = "mod_de_leo"
 class Main : ModInitializer {
     override fun onInitialize() {
         ModEntityTypes.register()
-       ModItems.register()
+        ModItems.register()
         ModSpawns.register()
 
         LOGGER.info("Mod de Leo initialized")
