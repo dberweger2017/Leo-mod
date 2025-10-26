@@ -45,6 +45,14 @@ object ModSpawns {
         )
         BiomeModifications.addSpawn(
             BiomeSelectors.foundInOverworld(),
+            SpawnGroup.CREATURE,
+            ModEntityTypes.ANGRY_PIG,
+            ANGRY_PIG_WEIGHT,
+            2,
+            4
+        )
+        BiomeModifications.addSpawn(
+            BiomeSelectors.foundInOverworld(),
             SpawnGroup.MONSTER,
             ModEntityTypes.SNIPER_SKELETON,
             SNIPER_SKELETON_WEIGHT,
@@ -77,6 +85,12 @@ object ModSpawns {
             HostileEntity::canSpawnInDark
         )
         SpawnRestriction.register(
+            ModEntityTypes.ANGRY_PIG,
+            SpawnRestriction.getLocation(EntityType.PIG),
+            SpawnRestriction.getHeightmapType(EntityType.PIG),
+            fuzuki.test.common.entity.AngryPigEntity::canSpawn
+        )
+        SpawnRestriction.register(
             ModEntityTypes.SNIPER_SKELETON,
             SpawnRestriction.getLocation(EntityType.SKELETON),
             SpawnRestriction.getHeightmapType(EntityType.SKELETON),
@@ -89,4 +103,5 @@ object ModSpawns {
     private const val TNT_SKELETON_WEIGHT = 10
     private const val GYM_ZOMBIE_WEIGHT = 10
     private const val SNIPER_SKELETON_WEIGHT = 8
+    private const val ANGRY_PIG_WEIGHT = 10
 }

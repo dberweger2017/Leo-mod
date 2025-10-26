@@ -40,6 +40,16 @@ object ModItems {
         )
     )
 
+    val ANGRY_PIG_SPAWN_EGG: Item = register(
+        "angry_pig_spawn_egg",
+        SpawnEggItem(
+            ModEntityTypes.ANGRY_PIG,
+            0xf2a78b,
+            0x651b1b,
+            Item.Settings()
+        )
+    )
+
     val TNT_SKELETON_SPAWN_EGG: Item = register(
         "tnt_skeleton_spawn_egg",
         SpawnEggItem(
@@ -68,6 +78,7 @@ object ModItems {
             it.add(SUPER_CREEPER_SPAWN_EGG)
             it.add(MEGA_ZOMBIE_SPAWN_EGG)
             it.add(GYM_ZOMBIE_SPAWN_EGG)
+            it.add(ANGRY_PIG_SPAWN_EGG)
             it.add(TNT_SKELETON_SPAWN_EGG)
             it.add(SNIPER_SKELETON_SPAWN_EGG)
         }

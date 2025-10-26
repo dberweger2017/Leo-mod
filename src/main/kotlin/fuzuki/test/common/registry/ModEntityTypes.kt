@@ -1,6 +1,7 @@
 package fuzuki.test.common.registry
 
 import fuzuki.test.common.MOD_ID
+import fuzuki.test.common.entity.AngryPigEntity
 import fuzuki.test.common.entity.GymZombieEntity
 import fuzuki.test.common.entity.MegaZombieEntity
 import fuzuki.test.common.entity.SniperSkeletonEntity
@@ -48,6 +49,16 @@ object ModEntityTypes {
             .build()
     )
 
+    val ANGRY_PIG: EntityType<AngryPigEntity> = Registry.register(
+        Registries.ENTITY_TYPE,
+        Identifier.of(MOD_ID, "angry_pig"),
+        FabricEntityTypeBuilder.create(SpawnGroup.CREATURE, ::AngryPigEntity)
+            .dimensions(EntityDimensions.fixed(0.9f, 0.9f))
+            .trackRangeBlocks(10)
+            .trackedUpdateRate(3)
+            .build()
+    )
+
     val TNT_SKELETON: EntityType<TntSkeletonEntity> = Registry.register(
         Registries.ENTITY_TYPE,
         Identifier.of(MOD_ID, "tnt_skeleton"),
@@ -72,6 +83,7 @@ object ModEntityTypes {
         FabricDefaultAttributeRegistry.register(SUPER_CREEPER, CreeperEntity.createCreeperAttributes())
         FabricDefaultAttributeRegistry.register(MEGA_ZOMBIE, MegaZombieEntity.createMegaZombieAttributes())
         FabricDefaultAttributeRegistry.register(GYM_ZOMBIE, GymZombieEntity.createGymZombieAttributes())
+        FabricDefaultAttributeRegistry.register(ANGRY_PIG, AngryPigEntity.createAttributes())
         FabricDefaultAttributeRegistry.register(TNT_SKELETON, TntSkeletonEntity.createAttributes())
         FabricDefaultAttributeRegistry.register(SNIPER_SKELETON, SniperSkeletonEntity.createAttributes())
     }
