@@ -1,0 +1,5 @@
+MAC:
+./gradlew build
+
+Windows: 
+.\gradlew.bat build

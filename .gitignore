@@ -21,3 +21,4 @@
 !/build
 build/*
 !/build/libs
+!/compilacion.txt
