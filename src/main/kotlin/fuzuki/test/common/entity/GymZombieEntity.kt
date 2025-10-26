@@ -4,7 +4,6 @@ import net.minecraft.entity.EntityType
 import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.attribute.DefaultAttributeContainer
 import net.minecraft.entity.attribute.EntityAttributes
-import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.mob.ZombieEntity
 import net.minecraft.world.World
 
@@ -20,19 +19,10 @@ class GymZombieEntity(entityType: EntityType<out GymZombieEntity>, world: World)
             launchUpwards(livingTarget)
             true
         } else {
-            super.tryAttack(target)
+            val baseDamage = getAttributeValue(EntityAttributes.GENERIC_ATTACK_DAMAGE)
+            val dealt = livingTarget.damage(world.damageSources().mobAttack(this), (baseDamage * 2.0).toFloat())
+            dealt
         }
-    }
-
-    override fun damage(source: DamageSource, amount: Float): Boolean {
-        val result = super.damage(source, amount)
-        if (result && !world.isClient) {
-            val attacker = source.attacker
-            if (attacker is LivingEntity) {
-                launchUpwards(attacker)
-            }
-        }
-        return result
     }
 
     private fun launchUpwards(entity: LivingEntity) {
