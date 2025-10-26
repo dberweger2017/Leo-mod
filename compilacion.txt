@@ -3,3 +3,12 @@ MAC:
 
 Windows: 
 .\gradlew.bat build
+
+PS C:\Users\lberw\Desktop\mods\Test-minecraft-mod\build\libs> .\gradlew.bat build
+.\gradlew.bat : El término '.\gradlew.bat' no se reconoce como nombre de un cmdlet, función, archivo de script o programa ejecutable. Compruebe si escribió correctamente el 
+nombre o, si incluyó una ruta de acceso, compruebe que dicha ruta es correcta e inténtelo de nuevo.
+En línea: 1 Carácter: 1
++ .\gradlew.bat build
++ ~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (.\gradlew.bat:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
