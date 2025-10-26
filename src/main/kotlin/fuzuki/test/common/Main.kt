@@ -1,5 +1,6 @@
 package fuzuki.test.common
 
+import fuzuki.test.common.registry.ModEffects
 import fuzuki.test.common.registry.ModEntityTypes
 import fuzuki.test.common.registry.ModItems
 import fuzuki.test.common.world.ModSpawns
@@ -10,6 +11,7 @@ const val MOD_ID = "mod_de_leo"
 
 class Main : ModInitializer {
     override fun onInitialize() {
+        ModEffects.register()
         ModEntityTypes.register()
         ModItems.register()
         ModSpawns.register()
