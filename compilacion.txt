@@ -12,3 +12,39 @@ En línea: 1 Carácter: 1
 + ~~~~~~~~~~~~~
     + CategoryInfo          : ObjectNotFound: (.\gradlew.bat:String) [], CommandNotFoundException
     + FullyQualifiedErrorId : CommandNotFoundException
+
+
+
+
+PS C:\Users\lberw\Desktop\mods\Test-minecraft-mod> .\gradlew.bat build
+>> 
+Downloading https://services.gradle.org/distributions/gradle-8.12-bin.zip
+.............10%.............20%.............30%.............40%.............50%.............60%.............70%.............80%.............90%.............100%
+
+Welcome to Gradle 8.12!
+
+Here are the highlights of this release:
+ - Enhanced error and warning reporting with the Problems API
+ - File-system watching support on Alpine Linux
+ - Build and test Swift 6 libraries and apps
+
+For more details see https://docs.gradle.org/8.12/release-notes.html
+
+Starting a Gradle Daemon (subsequent builds will be faster)
+
+> Configure project :
+Fabric Loom: 1.10.5
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+A problem occurred configuring root project 'Test-minecraft-mod'.
+> Failed to setup Minecraft, java.lang.IllegalStateException: Minecraft 1.21.1 requires Java 21 but Gradle is using 17
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 47s
