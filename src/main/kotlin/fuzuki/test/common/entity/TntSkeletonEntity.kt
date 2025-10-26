@@ -16,6 +16,7 @@ import net.minecraft.entity.passive.TurtleEntity
 import net.minecraft.entity.passive.WolfEntity
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.ItemStack
+import net.minecraft.item.Items
 import net.minecraft.registry.tag.DamageTypeTags
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.sound.SoundEvents
@@ -94,6 +95,14 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
             return true
         }
         return super.isInvulnerableTo(source)
+    }
+
+    override fun onDeath(source: DamageSource) {
+        super.onDeath(source)
+        if (!world.isClient) {
+            val amount = random.nextBetween(1, 13)
+            dropStack(ItemStack(Items.TNT, amount))
+        }
     }
 
     companion object {

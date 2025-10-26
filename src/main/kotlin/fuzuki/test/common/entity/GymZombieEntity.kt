@@ -15,17 +15,24 @@ class GymZombieEntity(entityType: EntityType<out GymZombieEntity>, world: World)
     }
 
     override fun tryAttack(target: net.minecraft.entity.Entity?): Boolean {
-        if (!world.isClient && target is LivingEntity) {
-            launchUpwards(target)
+        val livingTarget = target as? LivingEntity ?: return super.tryAttack(target)
+        return if (!world.isClient && random.nextInt(3) == 0) {
+            launchUpwards(livingTarget)
+            true
+        } else {
+            super.tryAttack(target)
         }
-        return true
     }
 
     override fun damage(source: DamageSource, amount: Float): Boolean {
-        if (!world.isClient && source.attacker is LivingEntity) {
-            launchUpwards(source.attacker as LivingEntity)
+        val result = super.damage(source, amount)
+        if (result && !world.isClient) {
+            val attacker = source.attacker
+            if (attacker is LivingEntity) {
+                launchUpwards(attacker)
+            }
         }
-        return false
+        return result
     }
 
     private fun launchUpwards(entity: LivingEntity) {
