@@ -33,13 +33,12 @@ class Main : ModInitializer {
 
         private fun registerPanicBoostHandler() {
             ServerLivingEntityEvents.AFTER_DAMAGE.register(
-                ServerLivingEntityEvents.AfterDamage { entity: LivingEntity, source, _, _, _ ->
+                ServerLivingEntityEvents.AfterDamage { entity: LivingEntity, source, amount, damageDealt, blocked ->
                     val attacker = source.attacker as? PlayerEntity ?: return@AfterDamage
                     if (entity.world.isClient) return@AfterDamage
                     val hitAnimal = entity as? AnimalEntity ?: return@AfterDamage
 
                     applyPanicBoost(hitAnimal, attacker.pos)
-
                     val neighbors = entity.world.getEntitiesByClass(
                         AnimalEntity::class.java,
                         entity.boundingBox.expand(PANIC_RADIUS)
@@ -51,11 +50,9 @@ class Main : ModInitializer {
         }
 
         private fun applyPanicBoost(animal: AnimalEntity, attackerPos: Vec3d) {
-            if (!animal.hasStatusEffect(ModEffects.PANIC_BOOST_ENTRY)) {
-                animal.addStatusEffect(
-                    StatusEffectInstance(ModEffects.PANIC_BOOST_ENTRY, PANIC_DURATION_TICKS, 0, false, false, false)
-                )
-            }
+            animal.addStatusEffect(
+                StatusEffectInstance(ModEffects.PANIC_BOOST_ENTRY, PANIC_DURATION_TICKS, 0, false, false, false)
+            )
 
             val direction = animal.pos.subtract(attackerPos).normalize()
             if (direction.lengthSquared() > 0.0) {

@@ -11,8 +11,6 @@ import net.minecraft.registry.entry.RegistryEntry
 import net.minecraft.util.Identifier
 
 object ModEffects {
-    private val PANIC_BOOST_ID: Identifier = Identifier.of(MOD_ID, "panic_boost")
-
     val PANIC_BOOST: StatusEffect = object : StatusEffect(StatusEffectCategory.BENEFICIAL, 0xFFAA00) {
         init {
             addAttributeModifier(
@@ -28,9 +26,10 @@ object ModEffects {
         private set
 
     fun register() {
-        Registry.register(Registries.STATUS_EFFECT, PANIC_BOOST_ID, PANIC_BOOST)
-        PANIC_BOOST_ENTRY = Registries.STATUS_EFFECT.getEntry(PANIC_BOOST_ID).orElseThrow {
-            IllegalStateException("Failed to retrieve registry entry for panic boost effect")
+        val id = Identifier.of(MOD_ID, "panic_boost")
+        Registry.register(Registries.STATUS_EFFECT, id, PANIC_BOOST)
+        PANIC_BOOST_ENTRY = Registries.STATUS_EFFECT.getEntry(id).orElseThrow {
+            IllegalStateException("Failed to obtain registry entry for panic boost effect")
         }
     }
 }
