@@ -59,6 +59,14 @@ object ModSpawns {
             1,
             2
         )
+        BiomeModifications.addSpawn(
+            BiomeSelectors.foundInOverworld(),
+            SpawnGroup.MONSTER,
+            ModEntityTypes.UNDEAD_MINER,
+            UNDEAD_MINER_WEIGHT,
+            1,
+            2
+        )
 
         SpawnRestriction.register(
             ModEntityTypes.MEGA_ZOMBIE,
@@ -96,6 +104,12 @@ object ModSpawns {
             SpawnRestriction.getHeightmapType(EntityType.SKELETON),
             HostileEntity::canSpawnInDark
         )
+        SpawnRestriction.register(
+            ModEntityTypes.UNDEAD_MINER,
+            SpawnRestriction.getLocation(EntityType.ZOMBIE),
+            SpawnRestriction.getHeightmapType(EntityType.ZOMBIE),
+            fuzuki.test.common.entity.UndeadMinerEntity::canSpawn
+        )
     }
 
     private const val MEGA_ZOMBIE_WEIGHT = 10
@@ -104,4 +118,5 @@ object ModSpawns {
     private const val GYM_ZOMBIE_WEIGHT = 10
     private const val SNIPER_SKELETON_WEIGHT = 8
     private const val ANGRY_PIG_WEIGHT = 10
+    private const val UNDEAD_MINER_WEIGHT = 20
 }

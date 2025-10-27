@@ -7,6 +7,7 @@ import fuzuki.test.common.entity.MegaZombieEntity
 import fuzuki.test.common.entity.SniperSkeletonEntity
 import fuzuki.test.common.entity.SuperCreeperEntity
 import fuzuki.test.common.entity.TntSkeletonEntity
+import fuzuki.test.common.entity.UndeadMinerEntity
 import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricDefaultAttributeRegistry
 import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricEntityTypeBuilder
 import net.minecraft.entity.EntityDimensions
@@ -79,6 +80,16 @@ object ModEntityTypes {
             .build()
     )
 
+    val UNDEAD_MINER: EntityType<UndeadMinerEntity> = Registry.register(
+        Registries.ENTITY_TYPE,
+        Identifier.of(MOD_ID, "undead_miner"),
+        FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::UndeadMinerEntity)
+            .dimensions(EntityDimensions.fixed(0.6f, 1.95f))
+            .trackRangeBlocks(8)
+            .trackedUpdateRate(3)
+            .build()
+    )
+
     fun register() {
         FabricDefaultAttributeRegistry.register(SUPER_CREEPER, CreeperEntity.createCreeperAttributes())
         FabricDefaultAttributeRegistry.register(MEGA_ZOMBIE, MegaZombieEntity.createMegaZombieAttributes())
@@ -86,5 +97,6 @@ object ModEntityTypes {
         FabricDefaultAttributeRegistry.register(ANGRY_PIG, AngryPigEntity.createAttributes())
         FabricDefaultAttributeRegistry.register(TNT_SKELETON, TntSkeletonEntity.createAttributes())
         FabricDefaultAttributeRegistry.register(SNIPER_SKELETON, SniperSkeletonEntity.createAttributes())
+        FabricDefaultAttributeRegistry.register(UNDEAD_MINER, UndeadMinerEntity.createAttributes())
     }
 }

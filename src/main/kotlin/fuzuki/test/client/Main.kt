@@ -1,7 +1,9 @@
 package fuzuki.test.client
 
 import fuzuki.test.client.model.AngryPigModel
+import fuzuki.test.client.model.UndeadMinerModel
 import fuzuki.test.client.render.AngryPigRenderer
+import fuzuki.test.client.render.UndeadMinerRenderer
 import fuzuki.test.client.render.GymZombieRenderer
 import fuzuki.test.client.render.MegaZombieRenderer
 import fuzuki.test.client.render.SuperCreeperRenderer
@@ -28,7 +30,11 @@ class Main : ClientModInitializer {
             SkeletonEntityRenderer(context)
         }
         EntityRendererRegistry.register(ModEntityTypes.ANGRY_PIG, ::AngryPigRenderer)
+        EntityRendererRegistry.register(ModEntityTypes.UNDEAD_MINER, ::UndeadMinerRenderer)
 
         EntityModelLayerRegistry.registerModelLayer(AngryPigModel.LAYER_LOCATION, AngryPigModel::getTexturedModelData)
+        EntityModelLayerRegistry.registerModelLayer(UndeadMinerModel.LAYER, UndeadMinerModel::getTexturedModelData)
+        EntityModelLayerRegistry.registerModelLayer(UndeadMinerModel.INNER_ARMOR_LAYER, UndeadMinerModel::getInnerArmorTexturedModelData)
+        EntityModelLayerRegistry.registerModelLayer(UndeadMinerModel.OUTER_ARMOR_LAYER, UndeadMinerModel::getOuterArmorTexturedModelData)
     }
 }

@@ -1,4 +1,6 @@
 {
   "entity.mod_de_leo.angry_pig": "Angry Pig",
-  "item.mod_de_leo.angry_pig_spawn_egg": "Angry Pig Spawn Egg"
+  "item.mod_de_leo.angry_pig_spawn_egg": "Angry Pig Spawn Egg",
+  "entity.mod_de_leo.undead_miner": "Undead Miner",
+  "item.mod_de_leo.undead_miner_spawn_egg": "Undead Miner Spawn Egg"
 }
