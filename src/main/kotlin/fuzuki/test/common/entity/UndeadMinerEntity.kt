@@ -46,10 +46,11 @@ import net.minecraft.world.biome.Biome
 import net.minecraft.world.event.GameEvent
 import net.minecraft.world.GameRules
 import net.minecraft.util.Hand
+import net.minecraft.particle.ParticleTypes
 import java.util.EnumSet
-import java.util.PriorityQueue
 import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.sqrt
 
 class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: World) :
     ZombieEntity(entityType, world) {
@@ -302,17 +303,22 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         debug("Collected ${items.size} drops into satchel at $pos")
     }
 
-    // --- Dig planner (stairs + 2-high tunnel) --------------------------------
+    // --- Movement planning & tunneling --------------------------------------
 
-    private data class PathNode(
-        val pos: BlockPos,
-        val gCost: Double,
-        val hCost: Double,
-        val parent: PathNode?
-    ) : Comparable<PathNode> {
-        val fCost: Double = gCost + hCost
+    private data class MovementGoal(
+        val targetPos: BlockPos,
+        val strategy: MovementStrategy,
+        val waypoints: List<BlockPos> = emptyList(),
+        val priority: Double = 0.0
+    )
 
-        override fun compareTo(other: PathNode): Int = fCost.compareTo(other.fCost)
+    private enum class MovementStrategy {
+        DIRECT_HORIZONTAL,
+        BUILD_STAIRS_UP,
+        DIG_STAIRS_DOWN,
+        VERTICAL_THEN_HORIZONTAL,
+        SPIRAL_ASCENT,
+        BRIDGE_GAP
     }
 
     private fun isSolid(pos: BlockPos): Boolean {
@@ -320,157 +326,320 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         return !state.isAir && !state.getCollisionShape(world, pos).isEmpty
     }
 
-    private fun nextDigBlockTowards(from: BlockPos, dest: BlockPos): BlockPos? {
-        val path = findDigPath(from, dest, maxSearchNodes = 200)
-        return path?.firstOrNull()
+    private fun planMovementTo(target: BlockPos): MovementGoal? {
+        val myPos = blockPos
+        val horizontalDist = sqrt(
+            ((target.x - myPos.x) * (target.x - myPos.x) +
+                (target.z - myPos.z) * (target.z - myPos.z)).toDouble()
+        )
+        val verticalDist = target.y - myPos.y
+
+        debug("Planning movement: horizontal=$horizontalDist, vertical=$verticalDist")
+
+        if (horizontalDist <= 3.0 && kotlin.math.abs(verticalDist) <= 2) {
+            debug("Already in melee range!")
+            return null
+        }
+
+        val goal = when {
+            kotlin.math.abs(verticalDist) <= 1 ->
+                MovementGoal(target, MovementStrategy.DIRECT_HORIZONTAL, planHorizontalPath(myPos, target))
+
+            verticalDist in 2..8 ->
+                MovementGoal(target, MovementStrategy.BUILD_STAIRS_UP, planStaircase(myPos, target))
+
+            verticalDist > 8 ->
+                MovementGoal(target, MovementStrategy.VERTICAL_THEN_HORIZONTAL, planVerticalThenHorizontal(myPos, target))
+
+            verticalDist < -1 ->
+                MovementGoal(target, MovementStrategy.DIG_STAIRS_DOWN, planDownwardPath(myPos, target))
+
+            else -> null
+        }
+
+        if (goal != null && !world.isClient) {
+            val center = Vec3d.ofCenter(myPos)
+            (world as? ServerWorld)?.let { serverWorld ->
+                serverWorld.spawnParticles(
+                    ParticleTypes.POOF,
+                    center.x, center.y + 1.0, center.z,
+                    10, 0.5, 0.5, 0.5, 0.1
+                )
+            }
+            debug("New plan: ${goal.strategy} with ${goal.waypoints.size} waypoints")
+        }
+
+        return goal
     }
 
-    private fun findDigPath(start: BlockPos, goal: BlockPos, maxSearchNodes: Int): List<BlockPos>? {
-        val openSet = PriorityQueue<PathNode>()
-        val closedSet = mutableSetOf<BlockPos>()
-        val costMap = mutableMapOf<BlockPos, Double>()
+    private fun planHorizontalPath(from: BlockPos, to: BlockPos): List<BlockPos> {
+        val path = mutableListOf<BlockPos>()
+        val dx = Integer.signum(to.x - from.x)
+        val dz = Integer.signum(to.z - from.z)
 
-        val startNode = PathNode(start, 0.0, heuristic(start, goal), null)
-        openSet.add(startNode)
-        costMap[start] = 0.0
+        var current = from
+        val maxSteps = 32
+        var steps = 0
 
-        var nodesSearched = 0
+        while (steps < maxSteps && !isCloseEnoughForMelee(current, to)) {
+            val remainingX = kotlin.math.abs(to.x - current.x)
+            val remainingZ = kotlin.math.abs(to.z - current.z)
 
-        while (openSet.isNotEmpty() && nodesSearched < maxSearchNodes) {
-            val current = openSet.poll()
-            nodesSearched++
-
-            if (current.pos == goal) {
-                return reconstructPath(current).drop(1)
+            val nextPos = when {
+                remainingX > remainingZ && remainingX > 0 -> current.add(dx, 0, 0)
+                remainingZ > 0 -> current.add(0, 0, dz)
+                remainingX > 0 -> current.add(dx, 0, 0)
+                else -> break
             }
 
-            closedSet.add(current.pos)
+            if (needsDigging(nextPos)) path.add(nextPos)
+            current = nextPos
+            steps++
+        }
 
-            for (dx in -1..1) {
-                for (dy in -1..1) {
-                    for (dz in -1..1) {
-                        if (dx == 0 && dy == 0 && dz == 0) continue
+        debug("Horizontal path planned: ${path.size} blocks to dig")
+        return path
+    }
 
-                        val neighbor = current.pos.add(dx, dy, dz)
-                        if (neighbor in closedSet) continue
+    private fun planStaircase(from: BlockPos, to: BlockPos): List<BlockPos> {
+        val path = mutableListOf<BlockPos>()
+        val dx = Integer.signum(to.x - from.x)
+        val dz = Integer.signum(to.z - from.z)
 
-                        if (neighbor.getSquaredDistance(goal) > MAX_TUNNEL_RANGE_SQ) continue
+        var current = from
+        val targetHeight = to.y
+        val maxSteps = 64
+        var steps = 0
 
-                        val moveCost = getDigCost(current.pos, neighbor)
-                        if (moveCost < 0) continue
+        debug("Planning staircase from $from to $to")
 
-                        val tentativeGCost = current.gCost + moveCost
-                        if (tentativeGCost >= costMap.getOrDefault(neighbor, Double.MAX_VALUE)) continue
+        while (steps < maxSteps && current.y < targetHeight && !isCloseEnoughForMelee(current, to)) {
+            val horizontalNext = current.add(
+                if (kotlin.math.abs(to.x - current.x) > 0) dx else 0,
+                0,
+                if (kotlin.math.abs(to.z - current.z) > 0) dz else 0
+            )
 
-                        costMap[neighbor] = tentativeGCost
-                        openSet.add(
-                            PathNode(
-                                neighbor,
-                                tentativeGCost,
-                                heuristic(neighbor, goal),
-                                current
-                            )
-                        )
-                    }
+            val stairTop = horizontalNext.up()
+
+            addStairStepBlocks(path, current, horizontalNext, stairTop)
+
+            current = stairTop
+            steps++
+        }
+
+        if (current.y >= targetHeight - 1) {
+            path.addAll(planHorizontalPath(current, to))
+        }
+
+        debug("Staircase planned: ${path.size} blocks to dig, final height: ${current.y}")
+        return path
+    }
+
+    private fun addStairStepBlocks(path: MutableList<BlockPos>, from: BlockPos, horizontalPos: BlockPos, topPos: BlockPos) {
+        if (needsDigging(horizontalPos)) path.add(horizontalPos)
+        if (needsDigging(horizontalPos.up())) path.add(horizontalPos.up())
+        if (needsDigging(topPos)) path.add(topPos)
+        if (needsDigging(topPos.up())) path.add(topPos.up())
+    }
+
+    private fun planVerticalThenHorizontal(from: BlockPos, to: BlockPos): List<BlockPos> {
+        val path = mutableListOf<BlockPos>()
+        val intermediateHeight = to.y - 2
+        val verticalTarget = BlockPos(from.x, intermediateHeight, from.z)
+
+        path.addAll(planStaircase(from, verticalTarget))
+
+        val finalTarget = BlockPos(to.x, intermediateHeight, to.z)
+        path.addAll(planHorizontalPath(verticalTarget, finalTarget))
+
+        if (to.y > intermediateHeight) {
+            path.addAll(planStaircase(finalTarget, to))
+        }
+
+        debug("Vertical-then-horizontal: ${path.size} total blocks")
+        return path
+    }
+
+    private fun planDownwardPath(from: BlockPos, to: BlockPos): List<BlockPos> {
+        val path = mutableListOf<BlockPos>()
+        val dx = Integer.signum(to.x - from.x)
+        val dz = Integer.signum(to.z - from.z)
+
+        var current = from
+        val maxSteps = 32
+        var steps = 0
+
+        while (steps < maxSteps && current.y > to.y && !isCloseEnoughForMelee(current, to)) {
+            val nextDown = current.add(dx, -1, dz)
+
+            if (needsDigging(nextDown)) path.add(nextDown)
+            if (needsDigging(nextDown.up())) path.add(nextDown.up())
+
+            current = nextDown
+            steps++
+        }
+
+        if (!isCloseEnoughForMelee(current, to)) {
+            path.addAll(planHorizontalPath(current, to))
+        }
+
+        return path
+    }
+
+    private fun needsDigging(pos: BlockPos): Boolean {
+        val state = world.getBlockState(pos)
+        return !state.isAir && isBreakableForMiner(state, pos)
+    }
+
+    private fun isCloseEnoughForMelee(pos: BlockPos, target: BlockPos): Boolean {
+        val dx = kotlin.math.abs(target.x - pos.x)
+        val dy = kotlin.math.abs(target.y - pos.y)
+        val dz = kotlin.math.abs(target.z - pos.z)
+        return dx <= 3 && dz <= 3 && dy <= 2
+    }
+
+    private var currentMovementGoal: MovementGoal? = null
+    private var currentWaypointIndex: Int = 0
+
+    private fun nextDigBlockTowards(from: BlockPos, dest: BlockPos): BlockPos? {
+        if (currentMovementGoal?.targetPos != dest) {
+            if (currentMovementGoal != null) {
+                clearMovementPlan(celebrate = false)
+            }
+            currentMovementGoal = planMovementTo(dest)
+            currentWaypointIndex = 0
+        }
+
+        val goal = currentMovementGoal ?: return null
+        val waypoints = goal.waypoints
+        if (waypoints.isEmpty()) return null
+
+        while (currentWaypointIndex < waypoints.size) {
+            val nextBlock = waypoints[currentWaypointIndex]
+            if (needsDigging(nextBlock)) {
+                debug("Next dig target: $nextBlock (waypoint ${currentWaypointIndex + 1}/${waypoints.size})")
+                return nextBlock
+            }
+            currentWaypointIndex++
+        }
+
+        clearMovementPlan()
+        return null
+    }
+
+    private fun digTunnelAt(pos: BlockPos) {
+        when (currentMovementGoal?.strategy) {
+            MovementStrategy.BUILD_STAIRS_UP -> digStairStep(pos)
+            MovementStrategy.DIG_STAIRS_DOWN -> digDownwardStep(pos)
+            else -> digStandardTunnel(pos)
+        }
+    }
+
+    private fun digStairStep(pos: BlockPos) {
+        breakBlockServerSide(pos)
+        val up = pos.up()
+        if (isSolid(up)) breakBlockServerSide(up)
+    }
+
+    private fun digDownwardStep(pos: BlockPos) {
+        breakBlockServerSide(pos)
+        val up = pos.up()
+        if (isSolid(up)) breakBlockServerSide(up)
+    }
+
+    private fun digStandardTunnel(pos: BlockPos) {
+        breakBlockServerSide(pos)
+        val up = pos.up()
+        if (isSolid(up)) breakBlockServerSide(up)
+    }
+
+    private fun visualizeMovementPlan() {
+        if (world.isClient) return
+        val serverWorld = world as? ServerWorld ?: return
+        val goal = currentMovementGoal ?: return
+        val waypoints = goal.waypoints
+        if (waypoints.isEmpty()) return
+
+        val strategyParticle = when (goal.strategy) {
+            MovementStrategy.DIRECT_HORIZONTAL -> ParticleTypes.SMOKE
+            MovementStrategy.BUILD_STAIRS_UP -> ParticleTypes.FLAME
+            MovementStrategy.DIG_STAIRS_DOWN -> ParticleTypes.DRIPPING_WATER
+            MovementStrategy.VERTICAL_THEN_HORIZONTAL -> ParticleTypes.END_ROD
+            MovementStrategy.SPIRAL_ASCENT -> ParticleTypes.PORTAL
+            MovementStrategy.BRIDGE_GAP -> ParticleTypes.CLOUD
+        }
+
+        val startIndex = currentWaypointIndex
+        val endIndex = (startIndex + 8).coerceAtMost(waypoints.size)
+
+        for (i in startIndex until endIndex) {
+            val pos = waypoints[i]
+            val center = Vec3d.ofCenter(pos)
+            when {
+                i == currentWaypointIndex -> {
+                    serverWorld.spawnParticles(
+                        ParticleTypes.FLAME,
+                        center.x, center.y + 0.5, center.z,
+                        3, 0.2, 0.2, 0.2, 0.02
+                    )
+                    serverWorld.spawnParticles(
+                        ParticleTypes.HAPPY_VILLAGER,
+                        center.x, center.y + 1.0, center.z,
+                        1, 0.0, 0.0, 0.0, 0.0
+                    )
+                }
+                i < currentWaypointIndex + 3 -> {
+                    serverWorld.spawnParticles(
+                        strategyParticle,
+                        center.x, center.y + 0.3, center.z,
+                        2, 0.1, 0.1, 0.1, 0.01
+                    )
+                }
+                else -> {
+                    serverWorld.spawnParticles(
+                        ParticleTypes.SMOKE,
+                        center.x, center.y + 0.1, center.z,
+                        1, 0.05, 0.05, 0.05, 0.005
+                    )
                 }
             }
         }
 
-        return findSimpleDigTarget(start, goal)?.let { listOf(it) }
-    }
-
-    private fun reconstructPath(node: PathNode): List<BlockPos> {
-        val path = mutableListOf<BlockPos>()
-        var current: PathNode? = node
-        while (current != null) {
-            path.add(current.pos)
-            current = current.parent
-        }
-        return path.reversed()
-    }
-
-    private fun heuristic(from: BlockPos, to: BlockPos): Double {
-        val dx = abs(to.x - from.x).toDouble()
-        val dy = abs(to.y - from.y).toDouble() * 1.2
-        val dz = abs(to.z - from.z).toDouble()
-        return dx + dy + dz
-    }
-
-    private fun getDigCost(from: BlockPos, to: BlockPos): Double {
-        val dx = abs(to.x - from.x)
-        val dy = abs(to.y - from.y)
-        val dz = abs(to.z - from.z)
-
-        if (dx + dy + dz > 1) {
-            if (dx > 0 && dy > 0 && dz > 0) return -1.0
-            if ((dx > 0 && dy > 0) || (dx > 0 && dz > 0) || (dy > 0 && dz > 0)) {
-                val cost = getBlockBreakCost(to)
-                return if (cost < 0) -1.0 else cost * 1.4
-            }
-        }
-
-        return getBlockBreakCost(to)
-    }
-
-    private fun getBlockBreakCost(pos: BlockPos): Double {
-        val state = world.getBlockState(pos)
-        if (state.isAir) return 0.1
-        if (!isBreakableForMiner(state, pos)) return -1.0
-
-        val hardness = state.getHardness(world, pos)
-        val baseCost = when {
-            hardness <= 0.5f -> 1.0
-            hardness <= 2.0f -> 2.0
-            hardness <= 5.0f -> 4.0
-            else -> 8.0
-        }
-
-        val block = state.block
-        return when {
-            block === Blocks.DIRT || block === Blocks.STONE ||
-                block === Blocks.COBBLESTONE || block === Blocks.GRAVEL -> baseCost * 0.8
-
-            block === Blocks.DIAMOND_ORE || block === Blocks.EMERALD_ORE -> baseCost * 3.0
-            block === Blocks.SPAWNER -> baseCost * 10.0
-            else -> baseCost
-        }
-    }
-
-    private fun findSimpleDigTarget(from: BlockPos, dest: BlockPos): BlockPos? {
-        val dx = Integer.signum(dest.x - from.x)
-        val dy = Integer.signum(dest.y - from.y)
-        val dz = Integer.signum(dest.z - from.z)
-
-        val candidates = listOf(
-            from.add(dx, 0, 0),
-            from.add(0, 0, dz),
-            from.add(dx, dy, 0),
-            from.add(0, dy, dz),
-            from.add(dx, 0, dz),
-            from.add(0, dy, 0),
-            from.add(dx, dy, dz)
+        val target = goal.targetPos
+        val targetCenter = Vec3d.ofCenter(target)
+        serverWorld.spawnParticles(
+            ParticleTypes.HEART,
+            targetCenter.x, targetCenter.y + 2.0, targetCenter.z,
+            2, 0.3, 0.3, 0.3, 0.0
         )
-
-        return candidates.find { pos ->
-            val state = world.getBlockState(pos)
-            !state.isAir && isBreakableForMiner(state, pos)
-        }
     }
 
-    private fun digTunnelAt(pos: BlockPos) {
-        breakBlockServerSide(pos)
-        val up = pos.up()
-        if (isSolid(up)) breakBlockServerSide(up)
-
-        val down = pos.down()
-        if (isSolid(down) && needsFloorClearing(pos)) {
-            breakBlockServerSide(down)
+    private fun debugMovementStrategy() {
+        val goal = currentMovementGoal ?: return
+        val strategyName = when (goal.strategy) {
+            MovementStrategy.DIRECT_HORIZONTAL -> "Direct Tunnel"
+            MovementStrategy.BUILD_STAIRS_UP -> "Building Stairs Up"
+            MovementStrategy.DIG_STAIRS_DOWN -> "Digging Down"
+            MovementStrategy.VERTICAL_THEN_HORIZONTAL -> "Vertical→Horizontal"
+            MovementStrategy.SPIRAL_ASCENT -> "Spiral Ascent"
+            MovementStrategy.BRIDGE_GAP -> "Bridge Gap"
         }
+        debug("$strategyName -> ${goal.targetPos} (${currentWaypointIndex}/${goal.waypoints.size})")
     }
 
-    private fun needsFloorClearing(pos: BlockPos): Boolean {
-        val surrounding = listOf(pos.north(), pos.south(), pos.east(), pos.west())
-        return surrounding.count { isSolid(it) } >= 3
+    private fun clearMovementPlan(celebrate: Boolean = true) {
+        if (celebrate && !world.isClient && currentMovementGoal != null) {
+            val center = Vec3d.ofCenter(blockPos)
+            (world as? ServerWorld)?.spawnParticles(
+                ParticleTypes.TOTEM_OF_UNDYING,
+                center.x, center.y + 1.5, center.z,
+                8, 0.8, 0.8, 0.8, 0.2
+            )
+            debug("Movement plan completed/cleared")
+        }
+        currentMovementGoal = null
+        currentWaypointIndex = 0
     }
 
     // --- Acquire target through walls (no LOS) --------------------------------
@@ -537,17 +706,26 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
             miner.navigation.stop()
             miner.isAttacking = false
             clearCrackProgress()
+            miner.clearMovementPlan(celebrate = false)
         }
 
         override fun stop() {
             clearCrackProgress()
             digPos = null
             miningTicks = 0
+            miner.clearMovementPlan(celebrate = false)
         }
 
         override fun tick() {
             val target = miner.target ?: return
             if (!target.isAlive) return
+
+            if (miner.world.time % 10L == 0L) {
+                miner.visualizeMovementPlan()
+            }
+            if (miner.world.time % 60L == 0L) {
+                miner.debugMovementStrategy()
+            }
 
             if (digPos == null || world.getBlockState(digPos).isAir) {
                 digPos = miner.nextDigBlockTowards(miner.blockPos, target.blockPos)
@@ -586,6 +764,14 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 miningTicks = 0
                 clearCrackProgress()
                 digPos = miner.nextDigBlockTowards(miner.blockPos, target.blockPos)
+
+                if (!world.isClient) {
+                    (world as? ServerWorld)?.spawnParticles(
+                        ParticleTypes.HAPPY_VILLAGER,
+                        center.x, center.y, center.z,
+                        5, 0.5, 0.5, 0.5, 0.1
+                    )
+                }
             }
         }
 
@@ -651,6 +837,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
             miningTicks = 0
             miner.navigation.stop()
             clearCrackProgress()
+            miner.clearMovementPlan(celebrate = false)
         }
 
         override fun stop() {
@@ -658,10 +845,18 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
             vandalTarget = null
             digPos = null
             miningTicks = 0
+            miner.clearMovementPlan(celebrate = false)
         }
 
         override fun tick() {
             val vt = vandalTarget ?: return
+
+            if (miner.world.time % 10L == 0L) {
+                miner.visualizeMovementPlan()
+            }
+            if (miner.world.time % 60L == 0L) {
+                miner.debugMovementStrategy()
+            }
 
             // If we can directly reach the vandal block, go break it
             if (closeEnoughToBreak(vt) && lineUnobstructed(vt)) {
@@ -718,6 +913,14 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 miningTicks = 0
                 clearCrackProgress()
                 digPos = miner.nextDigBlockTowards(miner.blockPos, vt)
+
+                if (!world.isClient) {
+                    (world as? ServerWorld)?.spawnParticles(
+                        ParticleTypes.HAPPY_VILLAGER,
+                        center.x, center.y, center.z,
+                        4, 0.4, 0.4, 0.4, 0.08
+                    )
+                }
             }
         }
 
@@ -764,6 +967,15 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 miningTicks = 0
                 clearCrackProgress()
                 vandalTarget = null // pick a new vandal target next cycle
+
+                if (!world.isClient) {
+                    val center = Vec3d.ofCenter(pos)
+                    (world as? ServerWorld)?.spawnParticles(
+                        ParticleTypes.HAPPY_VILLAGER,
+                        center.x, center.y, center.z,
+                        6, 0.6, 0.6, 0.6, 0.12
+                    )
+                }
             }
         }
 
