@@ -5,7 +5,6 @@ import net.minecraft.block.Block
 import net.minecraft.block.BlockState
 import net.minecraft.block.Blocks
 import net.minecraft.entity.*
-import net.minecraft.entity.ai.goal.ActiveTargetGoal
 import net.minecraft.entity.ai.goal.Goal
 import net.minecraft.entity.ai.goal.MeleeAttackGoal
 import net.minecraft.entity.attribute.DefaultAttributeContainer
@@ -13,10 +12,11 @@ import net.minecraft.entity.attribute.EntityAttributes
 import net.minecraft.entity.data.DataTracker
 import net.minecraft.entity.data.TrackedData
 import net.minecraft.entity.data.TrackedDataHandlerRegistry
-import net.minecraft.entity.mob.MobEntity
 import net.minecraft.entity.mob.ZombieEntity
-import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.entity.ItemEntity
+import net.minecraft.entity.LivingEntity
+import net.minecraft.entity.mob.MobEntity
+import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.inventory.Inventories
 import net.minecraft.item.Item
 import net.minecraft.item.ItemStack
@@ -31,7 +31,6 @@ import net.minecraft.registry.RegistryKeys
 import net.minecraft.registry.RegistryKey
 import net.minecraft.registry.entry.RegistryEntry
 import net.minecraft.server.world.ServerWorld
-import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.util.Identifier
 import net.minecraft.util.collection.DefaultedList
 import net.minecraft.util.math.BlockPos
@@ -83,6 +82,75 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     }
 
     private val lootSatchel: DefaultedList<ItemStack> = DefaultedList.ofSize(27, ItemStack.EMPTY)
+    private var nextEnemyScanTick: Long = 0
+
+    private fun currentEnemyTarget(): LivingEntity? {
+        val candidate = target as? LivingEntity ?: return null
+        if (!candidate.isAlive) return null
+        if (!isValidEnemyTarget(candidate)) return null
+        if (squaredDistanceTo(candidate) > MAX_TUNNEL_RANGE_SQ) return null
+        return candidate
+    }
+
+    private fun refreshEnemyTarget(): LivingEntity? {
+        val found = acquireEnemyTarget(force = false)
+        if (found != null) {
+            if (target !== found) {
+                target = found
+            }
+            return found
+        }
+        target = null
+        return null
+    }
+
+    private fun hasEnemyTargetInRange(): Boolean {
+        return acquireEnemyTarget(force = false) != null
+    }
+
+    private fun acquireEnemyTarget(force: Boolean): LivingEntity? {
+        val existing = currentEnemyTarget()
+        if (existing != null) {
+            return existing
+        }
+        val worldTime = world.time
+        if (!force && worldTime < nextEnemyScanTick) {
+            return null
+        }
+        val found = scanForEnemyTarget()
+        nextEnemyScanTick = worldTime + ENEMY_RESCAN_INTERVAL_TICKS
+        target = found
+        return found
+    }
+
+    private fun scanForEnemyTarget(): LivingEntity? {
+        val range = ENEMY_SEARCH_RANGE
+        val rangeSq = MAX_TUNNEL_RANGE_SQ
+
+        val nearestPlayer = world.players
+            .asSequence()
+            .filter { it.isAlive && !it.isSpectator && !it.isCreative }
+            .filter { isValidEnemyTarget(it) }
+            .filter { squaredDistanceTo(it) <= rangeSq }
+            .minByOrNull { squaredDistanceTo(it) }
+
+        if (nearestPlayer != null) {
+            return nearestPlayer
+        }
+
+        val box = Box.of(Vec3d.ofCenter(blockPos), range * 2, range * 2, range * 2)
+        return world.getEntitiesByClass(LivingEntity::class.java, box) { other ->
+            other !== this && isValidEnemyTarget(other) && squaredDistanceTo(other) <= rangeSq
+        }.minByOrNull { squaredDistanceTo(it) }
+    }
+
+    private fun isValidEnemyTarget(entity: LivingEntity): Boolean {
+        if (entity === this) return false
+        if (!entity.isAlive) return false
+        if (entity is PlayerEntity && (entity.isSpectator || entity.isCreative)) return false
+        if (!canTarget(entity)) return false
+        return true
+    }
 
     override fun initialize(
         world: ServerWorldAccess,
@@ -109,10 +177,6 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
     override fun initGoals() {
         super.initGoals()
-        // Through-walls targeting so tunneling makes sense
-        targetSelector.add(0, AcquirePlayerTargetThroughWallsGoal(this))
-        targetSelector.add(2, ActiveTargetGoal(this, PlayerEntity::class.java, 0, false, false, null))
-
         // Priorities: 2 = tunneling to player; 3 = melee; 4 = vandalize through walls when idle
         goalSelector.add(2, TunnelToTargetGoal(this))
         goalSelector.add(3, MeleeAttackGoal(this, 1.0, false))
@@ -156,7 +220,9 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         private val VARIANT: TrackedData<Int> =
             DataTracker.registerData(UndeadMinerEntity::class.java, TrackedDataHandlerRegistry.INTEGER)
 
-        private const val MAX_TUNNEL_RANGE_SQ = 32.0 * 32.0
+        private const val ENEMY_SEARCH_RANGE = 32.0
+        private const val MAX_TUNNEL_RANGE_SQ = ENEMY_SEARCH_RANGE * ENEMY_SEARCH_RANGE
+        private const val ENEMY_RESCAN_INTERVAL_TICKS = 5L
         private const val MAX_SPAWN_Y = 63
         private const val MINING_REACH_BLOCKS = 4.0
         private const val MINING_REACH_SQ = MINING_REACH_BLOCKS * MINING_REACH_BLOCKS
@@ -642,34 +708,6 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         currentWaypointIndex = 0
     }
 
-    // --- Acquire target through walls (no LOS) --------------------------------
-
-    private class AcquirePlayerTargetThroughWallsGoal(private val mob: MobEntity) : Goal() {
-        private var candidate: PlayerEntity? = null
-
-        init { setControls(EnumSet.noneOf(Control::class.java)) }
-
-        override fun canStart(): Boolean {
-            val cur = mob.target
-            if (cur is PlayerEntity && cur.isAlive) return false
-
-            val range = mob.getAttributeValue(EntityAttributes.GENERIC_FOLLOW_RANGE).toDouble()
-            val player = mob.world.getClosestPlayer(mob.x, mob.y, mob.z, range) { p ->
-                p != null && p.isAlive && !p.isSpectator &&
-                    (p !is ServerPlayerEntity || !p.interactionManager.isCreative)
-            }
-            candidate = player
-            return candidate != null
-        }
-
-        override fun start() {
-            mob.target = candidate
-            candidate = null
-        }
-
-        override fun shouldContinue(): Boolean = false
-    }
-
     // --- Tunneling to PLAYER (sticky) -----------------------------------------
 
     private class TunnelToTargetGoal(private val miner: UndeadMinerEntity) : Goal() {
@@ -682,8 +720,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         init { setControls(EnumSet.of(Control.MOVE, Control.LOOK)) }
 
         override fun canStart(): Boolean {
-            val target = miner.target ?: return false
-            if (!target.isAlive) return false
+            val target = miner.refreshEnemyTarget() ?: return false
             if (miner.squaredDistanceTo(target) > MAX_TUNNEL_RANGE_SQ) return false
 
             digPos = miner.nextDigBlockTowards(miner.blockPos, target.blockPos)
@@ -692,8 +729,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
 
         override fun shouldContinue(): Boolean {
-            val target = miner.target ?: return false
-            if (!target.isAlive) return false
+            val target = miner.refreshEnemyTarget() ?: return false
             if (miner.squaredDistanceTo(target) > MAX_TUNNEL_RANGE_SQ) return false
 
             val pos = digPos ?: return false
@@ -706,7 +742,6 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
             miner.navigation.stop()
             miner.isAttacking = false
             clearCrackProgress()
-            miner.clearMovementPlan(celebrate = false)
         }
 
         override fun stop() {
@@ -717,7 +752,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
 
         override fun tick() {
-            val target = miner.target ?: return
+            val target = miner.refreshEnemyTarget() ?: return
             if (!target.isAlive) return
 
             if (miner.world.time % 10L == 0L) {
@@ -810,9 +845,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         init { setControls(EnumSet.of(Control.MOVE, Control.LOOK)) }
 
         override fun canStart(): Boolean {
-            // Only when NOT pursuing a player target
-            val t = miner.target
-            if (t is PlayerEntity && t.isAlive) return false
+            if (miner.hasEnemyTargetInRange()) return false
 
             vandalTarget = findNearestVandalTarget() ?: return false
             digPos = miner.nextDigBlockTowards(miner.blockPos, vandalTarget!!)
@@ -823,9 +856,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
 
         override fun shouldContinue(): Boolean {
-            // Abort if a player target appears
-            val t = miner.target
-            if (t is PlayerEntity && t.isAlive) return false
+            if (miner.hasEnemyTargetInRange()) return false
             val vt = vandalTarget ?: return false
             val st = world.getBlockState(vt)
             // stop if target disappeared or became unbreakable
@@ -980,7 +1011,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
 
         private fun findNearestVandalTarget(): BlockPos? {
-            val r = 10 // search radius
+            val r = ENEMY_SEARCH_RANGE.toInt()
             val origin = miner.blockPos
             var bestPos: BlockPos? = null
             var bestDistSq = Double.MAX_VALUE
@@ -1019,8 +1050,12 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
             // Chests / containers
             if (b === Blocks.CHEST || b === Blocks.TRAPPED_CHEST || b === Blocks.BARREL) return true
 
+            if (b === Blocks.COBBLESTONE || b === Blocks.MOSSY_COBBLESTONE) return true
+
             // Doors / Fences / Gates via tags
-            if (state.isIn(BlockTags.DOORS) || state.isIn(BlockTags.FENCES) || state.isIn(BlockTags.FENCE_GATES)) return true
+            if (state.isIn(BlockTags.DOORS) || state.isIn(BlockTags.FENCES) ||
+                state.isIn(BlockTags.FENCE_GATES) || state.isIn(BlockTags.WALLS)
+            ) return true
 
             return false
         }
