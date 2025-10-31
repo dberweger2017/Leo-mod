@@ -20,6 +20,7 @@ import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.effect.StatusEffects
 import net.minecraft.entity.mob.MobEntity
 import net.minecraft.entity.player.PlayerEntity
+import net.minecraft.entity.ai.pathing.PathNodeType
 import net.minecraft.inventory.Inventories
 import net.minecraft.item.Item
 import net.minecraft.item.ItemStack
@@ -38,6 +39,7 @@ import net.minecraft.sound.SoundCategory
 import net.minecraft.sound.SoundEvents
 import net.minecraft.util.Identifier
 import net.minecraft.util.collection.DefaultedList
+import net.minecraft.util.hit.HitResult
 import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
@@ -50,6 +52,7 @@ import net.minecraft.world.World
 import net.minecraft.world.biome.Biome
 import net.minecraft.world.event.GameEvent
 import net.minecraft.world.GameRules
+import net.minecraft.world.RaycastContext
 import net.minecraft.util.Hand
 import net.minecraft.particle.ParticleTypes
 import java.util.EnumSet
@@ -67,6 +70,8 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
     init {
         experiencePoints = EXPERIENCE
+        setPathfindingPenalty(PathNodeType.DANGER_OTHER, 0.0f)
+        setPathfindingPenalty(PathNodeType.DAMAGE_OTHER, 0.0f)
     }
 
     override fun initDataTracker(builder: DataTracker.Builder) {
@@ -84,11 +89,24 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         get() = variant.texture
 
     private fun debug(msg: String) {
-        println("[UndeadMiner] $msg")
+        if (DEBUG_LOGGING) {
+            println("[UndeadMiner] $msg")
+        }
+    }
+
+    private fun mobGriefingEnabled(): Boolean {
+        val serverWorld = world as? ServerWorld ?: return true
+        return serverWorld.gameRules.getBoolean(GameRules.DO_MOB_GRIEFING)
+    }
+
+    private fun isChunkLoaded(pos: BlockPos): Boolean {
+        val serverWorld = world as? ServerWorld ?: return true
+        return serverWorld.isChunkLoaded(pos)
     }
 
     private val lootSatchel: DefaultedList<ItemStack> = DefaultedList.ofSize(27, ItemStack.EMPTY)
     private var nextEnemyScanTick: Long = 0
+    private val vandalTargetCooldowns: MutableMap<BlockPos, Long> = mutableMapOf()
 
     private fun currentEnemyTarget(): LivingEntity? {
         val candidate = target as? LivingEntity ?: return null
@@ -167,6 +185,22 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     ): EntityData? {
         val biomeEntry: RegistryEntry<Biome> = world.getBiome(blockPos)
         variant = getRandomVariant(world.random, biomeEntry)
+        when (variant) {
+            Variant.GOLD -> {
+                getAttributeInstance(EntityAttributes.GENERIC_MOVEMENT_SPEED)?.baseValue = 0.26
+            }
+            Variant.IRON -> {
+                getAttributeInstance(EntityAttributes.GENERIC_KNOCKBACK_RESISTANCE)?.baseValue = 0.3
+                getAttributeInstance(EntityAttributes.GENERIC_ATTACK_DAMAGE)?.baseValue =
+                    (getAttributeInstance(EntityAttributes.GENERIC_ATTACK_DAMAGE)?.baseValue ?: 4.0) + 1.0
+            }
+            Variant.DIAMOND -> {
+                getAttributeInstance(EntityAttributes.GENERIC_ARMOR)?.baseValue = 6.0
+                getAttributeInstance(EntityAttributes.GENERIC_ATTACK_DAMAGE)?.baseValue =
+                    (getAttributeInstance(EntityAttributes.GENERIC_ATTACK_DAMAGE)?.baseValue ?: 4.0) + 1.0
+            }
+            else -> {}
+        }
         setCanPickUpLoot(false)
         return super.initialize(world, difficulty, spawnReason, entityData)
     }
@@ -183,7 +217,6 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     }
 
     override fun initGoals() {
-        super.initGoals()
         // Priorities: 2 = tunneling to player; 3 = melee; 4 = vandalize through walls when idle
         goalSelector.add(2, TunnelToTargetGoal(this))
         goalSelector.add(3, MeleeAttackGoal(this, 1.0, false))
@@ -235,20 +268,23 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         private const val MINING_REACH_BLOCKS = 4.0
         private const val MINING_REACH_SQ = MINING_REACH_BLOCKS * MINING_REACH_BLOCKS
         private const val SLOW_FALLING_DURATION_TICKS = 30 * 20
-        private const val MIN_DROP_FOR_POTION = 3
+        private const val MIN_DROP_FOR_POTION = 4
         private const val MAX_DROP_DISTANCE = 24
         private const val MAX_DROP_OVERSHOOT = 2
         private const val VANDAL_VERTICAL_RANGE = 6
-        private const val PLAN_REPLAN_INTERVAL_TICKS = 10L
+        private const val PLAN_REPLAN_INTERVAL_TICKS = 20L
         private const val PLAN_REPLAN_DISTANCE_SQ = 9.0
-        private const val PLAN_ORIGIN_DRIFT_SQ = 4.0
+        private const val PLAN_ORIGIN_DRIFT_SQ = 9.0
         private val ZERO_VEC = Vec3i(0, 0, 0)
         private const val HEURISTIC_WEIGHT = 1.04
         private const val HEURISTIC_SECONDARY = 0.01
         private const val TURN_PENALTY_HORIZONTAL = 0.25
         private const val TURN_PENALTY_VERTICAL = 0.15
         private const val VANDAL_BFS_LIMIT = 4096
-        private const val VANDAL_SCAN_COOLDOWN_TICKS = 20L
+        private const val VANDAL_SCAN_COOLDOWN_TICKS = 60L
+        private const val VANDAL_TARGET_COOLDOWN_TICKS = 200L
+        private const val PLAN_NODE_BUDGET = 3000
+        private const val DEBUG_LOGGING = false
 
         fun createAttributes(): DefaultAttributeContainer.Builder =
             createZombieAttributes()
@@ -267,6 +303,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         ): Boolean {
             if (!MobEntity.canMobSpawn(type, world, spawnReason, pos, random)) return false
             if (spawnReason != SpawnReason.SPAWNER && world.isSkyVisible(pos)) return false
+            if (!world.getBlockState(pos.down()).isOpaque) return false
             return pos.y <= MAX_SPAWN_Y
         }
 
@@ -393,6 +430,21 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         debug("Collected ${items.size} drops into satchel at $pos")
     }
 
+    private fun hasLineOfSight(blockPos: BlockPos): Boolean {
+        val start = Vec3d(x, eyeY, z)
+        val end = Vec3d.ofCenter(blockPos)
+        val result = world.raycast(
+            RaycastContext(
+                start,
+                end,
+                RaycastContext.ShapeType.COLLIDER,
+                RaycastContext.FluidHandling.NONE,
+                this
+            )
+        )
+        return result.type == HitResult.Type.MISS
+    }
+
     // --- Movement planning & tunneling --------------------------------------
 
     private data class MovementGoal(
@@ -423,6 +475,14 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 ParticleTypes.POOF,
                 center.x, center.y + 1.0, center.z,
                 10, 0.5, 0.5, 0.5, 0.1
+            )
+            (world as? ServerWorld)?.playSound(
+                null,
+                blockPos,
+                SoundEvents.BLOCK_NOTE_BLOCK_CHIME.value(),
+                SoundCategory.HOSTILE,
+                0.6f,
+                1.4f
             )
             debug("New plan: ${plan.size} dig steps toward $target")
         }
@@ -458,17 +518,24 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         val bestCost = mutableMapOf<BlockPos, Double>()
         bestCost[start] = 0.0
         val closed = mutableSetOf<BlockPos>()
+        var expansions = 0
 
         while (openSet.isNotEmpty()) {
             val current = openSet.poll()
             if (!closed.add(current.pos)) {
                 continue
             }
+            expansions++
+            if (expansions >= PLAN_NODE_BUDGET) {
+                debug("Plan aborted: node budget exceeded")
+                break
+            }
             if (isGoalPosition(current.pos, target)) {
                 return reconstructDigSequence(current)
             }
 
             for (neighbor in enumerateNeighbors(current.pos, start)) {
+                if (!isChunkLoaded(neighbor.pos)) continue
                 if (neighbor.pos in closed) {
                     continue
                 }
@@ -567,6 +634,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     }
 
     private fun ensurePassable(pos: BlockPos, breaks: MutableList<BlockPos>): Boolean {
+        if (!isChunkLoaded(pos)) return false
         val state = world.getBlockState(pos)
         if (state.isAir) {
             return true
@@ -583,11 +651,21 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     private fun digCost(blocks: List<BlockPos>): Double {
         var cost = 0.0
         for (pos in blocks) {
-            val state = world.getBlockState(pos)
-            val hardness = state.getHardness(world, pos)
-            cost += 1.0 + (hardness.coerceAtLeast(0f) * 4.0)
+            cost += blockDigCost(pos)
         }
         return cost
+    }
+
+    private fun blockDigCost(pos: BlockPos): Double {
+        val state = world.getBlockState(pos)
+        val hardness = state.getHardness(world, pos).coerceAtLeast(0f)
+        val tagPenalty = when {
+            state.isIn(BlockTags.ICE) -> 1.5
+            state.isOf(Blocks.OBSIDIAN) -> 6.0
+            state.isIn(BlockTags.STONE_ORE_REPLACEABLES) -> 0.6
+            else -> 1.0
+        }
+        return 1.0 * tagPenalty + hardness * 4.0
     }
 
     private fun withinPlanBounds(pos: BlockPos, origin: BlockPos, radius: Int): Boolean {
@@ -742,6 +820,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         val dropPlan = evaluateDropDepth(breakPos) ?: return null
         if (dropPlan.landing.y >= from.y) return null
         if (dropPlan.landing.y < dest.y - MAX_DROP_OVERSHOOT) return null
+        if (!isLandingAreaSafe(dropPlan.landing)) return null
         return dropPlan
     }
 
@@ -768,6 +847,18 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
             return DropPlan(breakPos, distance, cursor)
         }
         return null
+    }
+
+    private fun isLandingAreaSafe(pos: BlockPos): Boolean {
+        for (dx in -1..1) {
+            for (dz in -1..1) {
+                val check = pos.add(dx, 0, dz)
+                val state = world.getBlockState(check)
+                if (!isSafeLandingBlock(state, check)) return false
+                if (!state.fluidState.isEmpty && state.fluidState.fluid === Fluids.LAVA) return false
+            }
+        }
+        return true
     }
 
     private fun isSafeLandingBlock(state: BlockState, pos: BlockPos): Boolean {
@@ -922,6 +1013,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         init { setControls(EnumSet.of(Control.MOVE, Control.LOOK)) }
 
         override fun canStart(): Boolean {
+            if (!miner.mobGriefingEnabled()) return false
             val target = miner.refreshEnemyTarget() ?: return false
             if (miner.squaredDistanceTo(target) > MAX_TUNNEL_RANGE_SQ) return false
 
@@ -931,6 +1023,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
 
         override fun shouldContinue(): Boolean {
+            if (!miner.mobGriefingEnabled()) return false
             val target = miner.refreshEnemyTarget() ?: return false
             if (miner.squaredDistanceTo(target) > MAX_TUNNEL_RANGE_SQ) return false
 
@@ -987,6 +1080,12 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 digPos = null
                 miningTicks = 0
                 clearCrackProgress()
+                return
+            }
+
+            if (!miner.hasLineOfSight(pos)) {
+                miner.navigation.startMovingTo(center.x, center.y, center.z, 1.0)
+                showMiningProgress(pos, miningTicks, ticksPerBlock)
                 return
             }
 
@@ -1047,6 +1146,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
         override fun canStart(): Boolean {
             if (miner.hasEnemyTargetInRange()) return false
+            if (!miner.mobGriefingEnabled()) return false
             if (world.time < nextScanTick) return false
 
             val target = findNearestVandalTarget() ?: run {
@@ -1074,6 +1174,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
         override fun shouldContinue(): Boolean {
             if (miner.hasEnemyTargetInRange()) return false
+            if (!miner.mobGriefingEnabled()) return false
             val vt = vandalTarget ?: return false
             val st = world.getBlockState(vt)
             // stop if target disappeared or became unbreakable
@@ -1182,27 +1283,13 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
 
         private fun lineUnobstructed(dest: BlockPos): Boolean {
-            // crude ray march: if we find any solid block along the way, it's obstructed
-            var x = miner.x
-            var y = miner.y + miner.standingEyeHeight.toDouble()
-            var z = miner.z
-            val to = Vec3d.ofCenter(dest)
-            val dir = to.subtract(x, y, z).normalize()
-            val steps = 24
-            repeat(steps) {
-                x += dir.x
-                y += dir.y
-                z += dir.z
-                val p = BlockPos.ofFloored(x, y, z)
-                val s = world.getBlockState(p)
-                if (!s.isAir && !s.getCollisionShape(world, p).isEmpty) return false
-            }
-            return true
+            return miner.hasLineOfSight(dest)
         }
 
         private fun mineCurrent(pos: BlockPos) {
             val state = world.getBlockState(pos)
             if (state.isAir || !isVandalTarget(state) || !miner.isBreakableForMiner(state, pos)) {
+                miner.vandalTargetCooldowns[pos.toImmutable()] = miner.world.time + VANDAL_TARGET_COOLDOWN_TICKS
                 vandalTarget = null
                 miningTicks = 0
                 clearCrackProgress()
@@ -1220,6 +1307,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 miner.consumeDropPlanFor(pos)?.let { miner.handleDropAfterDig(it) }
                 miningTicks = 0
                 clearCrackProgress()
+                miner.vandalTargetCooldowns[pos.toImmutable()] = miner.world.time + VANDAL_TARGET_COOLDOWN_TICKS
                 vandalTarget = null // pick a new vandal target next cycle
 
                 if (!world.isClient) {
@@ -1251,9 +1339,14 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 examined++
 
                 if (current != origin) {
+                    val immutable = current.toImmutable()
+                    val blockedUntil = miner.vandalTargetCooldowns[immutable]
+                    if (blockedUntil != null && world.time < blockedUntil) {
+                        continue
+                    }
                     val state = world.getBlockState(current)
                     if (miner.isBreakableForMiner(state, current) && isVandalTarget(state)) {
-                        return current
+                        return immutable
                     }
                 }
 

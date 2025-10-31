@@ -45,30 +45,20 @@ object ModSpawns {
         )
         BiomeModifications.addSpawn(
             BiomeSelectors.foundInOverworld(),
-            SpawnGroup.CREATURE,
+            SpawnGroup.MONSTER,
             ModEntityTypes.ANGRY_PIG,
             ANGRY_PIG_WEIGHT,
             2,
             4
         )
+        val deserts = BiomeSelectors.tag(net.minecraft.registry.tag.BiomeTags.IS_DESERT)
+        val badlands = BiomeSelectors.tag(net.minecraft.registry.tag.BiomeTags.IS_BADLANDS)
+        val hills = BiomeSelectors.foundInOverworld().and { it.biome.value().depth > 0.4f }
+        val open = BiomeSelectors.foundInOverworld().and { it.biome.value().hasPrecipitation && it.biome.value().depth >= 0f }
+        val notOcean = BiomeSelectors.foundInOverworld().and { !it.biome.value().category.isOcean }
+
         BiomeModifications.addSpawn(
-            BiomeSelectors.foundInOverworld(),
-            SpawnGroup.MONSTER,
-            ModEntityTypes.SNIPER_SKELETON,
-            SNIPER_SKELETON_WEIGHT,
-            1,
-            2
-        )
-        BiomeModifications.addSpawn(
-            BiomeSelectors.foundInOverworld(),
-            SpawnGroup.MONSTER,
-            ModEntityTypes.UNDEAD_MINER,
-            UNDEAD_MINER_WEIGHT,
-            1,
-            2
-        )
-        BiomeModifications.addSpawn(
-            BiomeSelectors.foundInOverworld(),
+            deserts.or(badlands),
             SpawnGroup.MONSTER,
             ModEntityTypes.PYROMANIAC,
             PYROMANIAC_WEIGHT,
@@ -76,62 +66,54 @@ object ModSpawns {
             2
         )
 
-        SpawnRestriction.register(
-            ModEntityTypes.MEGA_ZOMBIE,
-            SpawnRestriction.getLocation(EntityType.ZOMBIE),
-            SpawnRestriction.getHeightmapType(EntityType.ZOMBIE),
-            HostileEntity::canSpawnInDark
+        BiomeModifications.addSpawn(
+            open.or(hills),
+            SpawnGroup.MONSTER,
+            ModEntityTypes.SNIPER_SKELETON,
+            SNIPER_SKELETON_WEIGHT,
+            1,
+            2
         )
-        SpawnRestriction.register(
-            ModEntityTypes.SUPER_CREEPER,
-            SpawnRestriction.getLocation(EntityType.CREEPER),
-            SpawnRestriction.getHeightmapType(EntityType.CREEPER),
-            HostileEntity::canSpawnInDark
+
+        BiomeModifications.addSpawn(
+            notOcean,
+            SpawnGroup.MONSTER,
+            ModEntityTypes.UNDEAD_MINER,
+            UNDEAD_MINER_WEIGHT,
+            1,
+            2
         )
-        SpawnRestriction.register(
-            ModEntityTypes.TNT_SKELETON,
-            SpawnRestriction.getLocation(EntityType.SKELETON),
-            SpawnRestriction.getHeightmapType(EntityType.SKELETON),
-            HostileEntity::canSpawnInDark
-        )
-        SpawnRestriction.register(
-            ModEntityTypes.GYM_ZOMBIE,
-            SpawnRestriction.getLocation(EntityType.ZOMBIE),
-            SpawnRestriction.getHeightmapType(EntityType.ZOMBIE),
-            HostileEntity::canSpawnInDark
-        )
+
+        registerHostile(ModEntityTypes.MEGA_ZOMBIE)
+        registerHostile(ModEntityTypes.SUPER_CREEPER)
+        registerHostile(ModEntityTypes.TNT_SKELETON)
+        registerHostile(ModEntityTypes.GYM_ZOMBIE)
+        registerHostile(ModEntityTypes.SNIPER_SKELETON)
+        registerHostile(ModEntityTypes.UNDEAD_MINER)
+        registerHostile(ModEntityTypes.PYROMANIAC)
         SpawnRestriction.register(
             ModEntityTypes.ANGRY_PIG,
-            SpawnRestriction.getLocation(EntityType.PIG),
-            SpawnRestriction.getHeightmapType(EntityType.PIG),
+            SpawnRestriction.Location.ON_GROUND,
+            net.minecraft.world.Heightmap.Type.MOTION_BLOCKING_NO_LEAVES,
             fuzuki.test.common.entity.AngryPigEntity::canSpawn
-        )
-        SpawnRestriction.register(
-            ModEntityTypes.SNIPER_SKELETON,
-            SpawnRestriction.getLocation(EntityType.SKELETON),
-            SpawnRestriction.getHeightmapType(EntityType.SKELETON),
-            HostileEntity::canSpawnInDark
-        )
-        SpawnRestriction.register(
-            ModEntityTypes.UNDEAD_MINER,
-            SpawnRestriction.getLocation(EntityType.ZOMBIE),
-            SpawnRestriction.getHeightmapType(EntityType.ZOMBIE),
-            fuzuki.test.common.entity.UndeadMinerEntity::canSpawn
-        )
-        SpawnRestriction.register(
-            ModEntityTypes.PYROMANIAC,
-            SpawnRestriction.getLocation(EntityType.ZOMBIE),
-            SpawnRestriction.getHeightmapType(EntityType.ZOMBIE),
-            fuzuki.test.common.entity.PyromaniacEntity::canSpawn
         )
     }
 
-    private const val MEGA_ZOMBIE_WEIGHT = 10
-    private const val SUPER_CREEPER_WEIGHT = 10
-    private const val TNT_SKELETON_WEIGHT = 10
-    private const val GYM_ZOMBIE_WEIGHT = 10
-    private const val SNIPER_SKELETON_WEIGHT = 8
-    private const val ANGRY_PIG_WEIGHT = 10
-    private const val UNDEAD_MINER_WEIGHT = 20
-    private const val PYROMANIAC_WEIGHT = 12
+    private fun registerHostile(entityType: EntityType<*>) {
+        SpawnRestriction.register(
+            entityType,
+            SpawnRestriction.Location.ON_GROUND,
+            net.minecraft.world.Heightmap.Type.MOTION_BLOCKING_NO_LEAVES,
+            HostileEntity::canSpawnInDark
+        )
+    }
+
+    private const val MEGA_ZOMBIE_WEIGHT = 2
+    private const val SUPER_CREEPER_WEIGHT = 2
+    private const val TNT_SKELETON_WEIGHT = 4
+    private const val GYM_ZOMBIE_WEIGHT = 4
+    private const val SNIPER_SKELETON_WEIGHT = 3
+    private const val ANGRY_PIG_WEIGHT = 6
+    private const val UNDEAD_MINER_WEIGHT = 6
+    private const val PYROMANIAC_WEIGHT = 3
 }

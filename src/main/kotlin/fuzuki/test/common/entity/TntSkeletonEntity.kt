@@ -19,6 +19,7 @@ import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.registry.tag.DamageTypeTags
+import net.minecraft.registry.tag.FluidTags
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.sound.SoundEvents
 import net.minecraft.util.hit.BlockHitResult
@@ -31,9 +32,11 @@ import net.minecraft.world.LocalDifficulty
 import net.minecraft.world.ServerWorldAccess
 import net.minecraft.world.World
 import net.minecraft.world.RaycastContext
+import net.minecraft.world.GameRules
 import java.util.EnumSet
 import kotlin.math.hypot
 import kotlin.math.sqrt
+import kotlin.math.max
 
 class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: World) :
     SkeletonEntity(entityType, world) {
@@ -89,11 +92,20 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
 
     fun shootTntAt(targetPos: Vec3d, forceMortar: Boolean = false) {
         if (world.isClient) return
-        val serverWorld = world as ServerWorld
+        val serverWorld = world as? ServerWorld ?: return
+        if (!serverWorld.gameRules.getBoolean(GameRules.DO_MOB_GRIEFING)) return
+        if (countNearbyTnt(serverWorld) >= MAX_ACTIVE_TNT) return
+        if (isTargetSubmerged(serverWorld, targetPos)) return
+
         val start = Vec3d(x, eyeY - 0.2, z)
         val delta = targetPos.subtract(start)
         val horizontalDistance = hypot(delta.x, delta.z)
         val closeRange = !forceMortar && horizontalDistance < CLOSE_RANGE_THRESHOLD
+        if (horizontalDistance < MIN_SAFE_DISTANCE) return
+
+        if (delta.lengthSquared() < SELF_BLAST_RADIUS_SQ && !hasLineOfSightTo(targetPos)) {
+            return
+        }
 
         val params = if (closeRange) {
             MortarParams(
@@ -115,6 +127,10 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
             )
         }
 
+        if (!hasCeilingClearance(serverWorld, start, params.desiredApex)) {
+            return
+        }
+
         val solution = solveMortarAdaptive(
             start = start,
             target = targetPos,
@@ -134,12 +150,59 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
             }
         }
 
+        val horizontalVelocity = Vec3d(velocity.x, 0.0, velocity.z)
+        val horizontalSpeed = horizontalVelocity.length()
+        if (horizontalSpeed > MAX_HORIZONTAL_SPEED) {
+            val scale = MAX_HORIZONTAL_SPEED / horizontalSpeed
+            velocity = Vec3d(horizontalVelocity.x * scale, velocity.y, horizontalVelocity.z * scale)
+        }
+
         val tnt = TntEntity(serverWorld, start.x, start.y, start.z, this)
         tnt.velocity = velocity
         val fuseOffset = if (closeRange) 6 else 10
-        tnt.fuse = (solution.flightTicks + fuseOffset).coerceAtMost(Short.MAX_VALUE.toInt())
+        val fuse = (solution.flightTicks + fuseOffset).coerceAtLeast(MIN_FUSE_TICKS).coerceAtMost(Short.MAX_VALUE.toInt())
+        tnt.fuse = fuse
         serverWorld.spawnEntity(tnt)
         world.playSound(null, blockPos, SoundEvents.ENTITY_TNT_PRIMED, soundCategory, 1.0f, 1.0f)
+    }
+
+    private fun hasLineOfSightTo(targetPos: Vec3d): Boolean {
+        val start = Vec3d(x, eyeY, z)
+        val result = world.raycast(
+            RaycastContext(
+                start,
+                targetPos,
+                RaycastContext.ShapeType.COLLIDER,
+                RaycastContext.FluidHandling.NONE,
+                this
+            )
+        )
+        return result.type == HitResult.Type.MISS
+    }
+
+    private fun hasCeilingClearance(serverWorld: ServerWorld, start: Vec3d, apexHeight: Double): Boolean {
+        if (apexHeight <= 0.0) return true
+        val apex = start.add(0.0, apexHeight, 0.0)
+        val result = serverWorld.raycast(
+            RaycastContext(
+                start,
+                apex,
+                RaycastContext.ShapeType.COLLIDER,
+                RaycastContext.FluidHandling.NONE,
+                this
+            )
+        )
+        return result.type == HitResult.Type.MISS
+    }
+
+    private fun countNearbyTnt(serverWorld: ServerWorld): Int {
+        val box = boundingBox.expand(TNT_SCAN_RADIUS)
+        return serverWorld.getEntitiesByClass(TntEntity::class.java, box) { true }.size
+    }
+
+    private fun isTargetSubmerged(serverWorld: ServerWorld, targetPos: Vec3d): Boolean {
+        val pos = BlockPos.ofFloored(targetPos)
+        return serverWorld.getFluidState(pos).isIn(FluidTags.WATER)
     }
 
     private data class MortarSolution(val velocity: Vec3d, val flightTicks: Int)
@@ -268,12 +331,34 @@ class TntSkeletonEntity(entityType: EntityType<out TntSkeletonEntity>, world: Wo
         const val REGULAR_ATTACK_INTERVAL = 40
         const val MORTAR_ATTACK_INTERVAL = 120
         const val CLOSE_ATTACK_INTERVAL = 80
+        const val ATTACK_INTERVAL_JITTER = 10
+        const val MIN_ATTACK_COOLDOWN = 20
         const val CLOSE_RANGE_THRESHOLD = 12.0
-        val BLOCK_TARGETS = setOf(Blocks.CHEST, Blocks.TRAPPED_CHEST, Blocks.CRAFTING_TABLE)
+        const val MIN_SAFE_DISTANCE = 4.0
+        const val SELF_BLAST_RADIUS_SQ = 36.0
+        const val MIN_FUSE_TICKS = 20
+        const val MAX_HORIZONTAL_SPEED = 2.2
+        const val TNT_SCAN_RADIUS = 32.0
+        const val MAX_ACTIVE_TNT = 6
         const val BLOCK_SEARCH_RADIUS = 12
+        const val BLOCK_SCAN_COOLDOWN_TICKS = 60L
+        const val BLOCK_SCAN_LIMIT = 200
+        val BLOCK_TARGETS = setOf(
+            Blocks.CHEST,
+            Blocks.TRAPPED_CHEST,
+            Blocks.BARREL,
+            Blocks.CRAFTING_TABLE,
+            Blocks.FURNACE,
+            Blocks.BLAST_FURNACE,
+            Blocks.SMOKER,
+            Blocks.LECTERN,
+            Blocks.ANVIL,
+            Blocks.STONECUTTER
+        )
 
         fun createAttributes() = AbstractSkeletonEntity.createAbstractSkeletonAttributes()
             .add(EntityAttributes.GENERIC_FOLLOW_RANGE, 48.0)
+            .add(EntityAttributes.GENERIC_KNOCKBACK_RESISTANCE, 0.1)
     }
 }
 
@@ -289,6 +374,8 @@ private class TntRangedAttackGoal(
     private var movingToLeft = false
     private var movingBackward = false
     private var combatTicks = -1
+    private var nextBlockScanTick: Long = 0
+    private var cachedBlockPos: BlockPos? = null
 
     init {
         setControls(EnumSet.of(Control.MOVE, Control.LOOK))
@@ -333,6 +420,7 @@ private class TntRangedAttackGoal(
         val entityTarget = skeleton.target
         if (entityTarget != null && entityTarget.isAlive) {
             blockTarget = null
+            cachedBlockPos = null
             handleEntityTarget(entityTarget)
         } else {
             handleBlockTarget()
@@ -381,8 +469,11 @@ private class TntRangedAttackGoal(
             } else {
                 TntSkeletonEntity.MORTAR_ATTACK_INTERVAL
             }
+            if (horizontalDistance < TntSkeletonEntity.MIN_SAFE_DISTANCE) {
+                return
+            }
             skeleton.shootTnt(target, 1.0f)
-            cooldown = attackInterval
+            cooldown = nextCooldown()
         }
     }
 
@@ -415,17 +506,25 @@ private class TntRangedAttackGoal(
         if (cooldown <= 0 && canSee) {
             attackInterval = TntSkeletonEntity.MORTAR_ATTACK_INTERVAL
             skeleton.shootTntAt(targetVec, forceMortar = true)
-            cooldown = attackInterval
+            cooldown = nextCooldown()
         }
     }
 
     private fun findBlockTarget(): BlockPos? {
         val world = skeleton.world
+        val now = world.time
+        if (now < nextBlockScanTick) {
+            return blockTarget?.takeIf { isBlockTargetValid(it) }
+        }
+        nextBlockScanTick = now + TntSkeletonEntity.BLOCK_SCAN_COOLDOWN_TICKS
+
         val origin = skeleton.blockPos
         val radius = TntSkeletonEntity.BLOCK_SEARCH_RADIUS
         var closestPos: BlockPos? = null
         var closestDistance = Double.MAX_VALUE
+        var scanned = 0
         for (pos in BlockPos.iterateOutwards(origin, radius, radius, radius)) {
+            if (scanned++ >= TntSkeletonEntity.BLOCK_SCAN_LIMIT) break
             if (!isBlockTargetValid(pos)) continue
             val center = Vec3d.ofCenter(pos)
             val distance = skeleton.squaredDistanceTo(center.x, center.y, center.z)
@@ -453,5 +552,11 @@ private class TntRangedAttackGoal(
 
     fun resetAttackInterval(difficulty: Difficulty) {
         attackInterval = if (difficulty == Difficulty.HARD) TntSkeletonEntity.HARD_ATTACK_INTERVAL else TntSkeletonEntity.REGULAR_ATTACK_INTERVAL
+    }
+
+    private fun nextCooldown(): Int {
+        val jitter = skeleton.random.nextBetween(-TntSkeletonEntity.ATTACK_INTERVAL_JITTER, TntSkeletonEntity.ATTACK_INTERVAL_JITTER)
+        val value = attackInterval + jitter
+        return if (value < TntSkeletonEntity.MIN_ATTACK_COOLDOWN) TntSkeletonEntity.MIN_ATTACK_COOLDOWN else value
     }
 }

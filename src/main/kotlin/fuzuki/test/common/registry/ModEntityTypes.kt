@@ -26,8 +26,8 @@ object ModEntityTypes {
         Identifier.of(MOD_ID, "super_creeper"),
         FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::SuperCreeperEntity)
             .dimensions(EntityDimensions.fixed(0.6f, 1.7f))
-            .trackRangeBlocks(8)
-            .trackedUpdateRate(3)
+            .trackRangeBlocks(32)
+            .trackedUpdateRate(2)
             .build()
     )
 
@@ -35,9 +35,9 @@ object ModEntityTypes {
         Registries.ENTITY_TYPE,
         Identifier.of(MOD_ID, "mega_zombie"),
         FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::MegaZombieEntity)
-            .dimensions(EntityDimensions.changing(0.6f * 1.5f, 1.95f * 1.5f))
-            .trackRangeBlocks(8)
-            .trackedUpdateRate(3)
+            .dimensions(EntityDimensions.changing(0.6f * 1.5f, 2.6f))
+            .trackRangeBlocks(40)
+            .trackedUpdateRate(2)
             .build()
     )
 
@@ -46,18 +46,18 @@ object ModEntityTypes {
         Identifier.of(MOD_ID, "gym_zombie"),
         FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::GymZombieEntity)
             .dimensions(EntityDimensions.fixed(0.6f, 1.95f))
-            .trackRangeBlocks(8)
-            .trackedUpdateRate(3)
+            .trackRangeBlocks(32)
+            .trackedUpdateRate(2)
             .build()
     )
 
     val ANGRY_PIG: EntityType<AngryPigEntity> = Registry.register(
         Registries.ENTITY_TYPE,
         Identifier.of(MOD_ID, "angry_pig"),
-        FabricEntityTypeBuilder.create(SpawnGroup.CREATURE, ::AngryPigEntity)
+        FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::AngryPigEntity)
             .dimensions(EntityDimensions.fixed(0.9f, 0.9f))
-            .trackRangeBlocks(10)
-            .trackedUpdateRate(3)
+            .trackRangeBlocks(32)
+            .trackedUpdateRate(2)
             .build()
     )
 
@@ -66,8 +66,8 @@ object ModEntityTypes {
         Identifier.of(MOD_ID, "tnt_skeleton"),
         FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::TntSkeletonEntity)
             .dimensions(EntityDimensions.fixed(0.6f, 1.99f))
-            .trackRangeBlocks(8)
-            .trackedUpdateRate(3)
+            .trackRangeBlocks(64)
+            .trackedUpdateRate(2)
             .build()
     )
 
@@ -76,8 +76,8 @@ object ModEntityTypes {
         Identifier.of(MOD_ID, "sniper_skeleton"),
         FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::SniperSkeletonEntity)
             .dimensions(EntityDimensions.fixed(0.6f, 1.99f))
-            .trackRangeBlocks(12)
-            .trackedUpdateRate(3)
+            .trackRangeBlocks(64)
+            .trackedUpdateRate(2)
             .build()
     )
 
@@ -86,8 +86,8 @@ object ModEntityTypes {
         Identifier.of(MOD_ID, "undead_miner"),
         FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::UndeadMinerEntity)
             .dimensions(EntityDimensions.fixed(0.6f, 1.95f))
-            .trackRangeBlocks(8)
-            .trackedUpdateRate(3)
+            .trackRangeBlocks(32)
+            .trackedUpdateRate(2)
             .build()
     )
 
@@ -96,8 +96,8 @@ object ModEntityTypes {
         Identifier.of(MOD_ID, "pyromaniac"),
         FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::PyromaniacEntity)
             .dimensions(EntityDimensions.fixed(0.6f, 1.95f))
-            .trackRangeBlocks(8)
-            .trackedUpdateRate(3)
+            .trackRangeBlocks(32)
+            .trackedUpdateRate(2)
             .build()
     )
 
