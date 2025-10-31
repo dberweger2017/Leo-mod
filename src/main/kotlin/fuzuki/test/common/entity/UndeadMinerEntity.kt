@@ -15,6 +15,7 @@ import net.minecraft.entity.data.TrackedDataHandlerRegistry
 import net.minecraft.entity.mob.ZombieEntity
 import net.minecraft.entity.ItemEntity
 import net.minecraft.entity.LivingEntity
+import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.effect.StatusEffects
 import net.minecraft.entity.mob.MobEntity
@@ -25,7 +26,6 @@ import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.loot.LootTable
 import net.minecraft.nbt.NbtCompound
-import net.minecraft.entity.damage.DamageSource
 import net.minecraft.enchantment.Enchantments
 import net.minecraft.fluid.Fluids
 import net.minecraft.registry.tag.BiomeTags
@@ -41,6 +41,7 @@ import net.minecraft.util.collection.DefaultedList
 import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
+import net.minecraft.util.math.Vec3i
 import net.minecraft.util.math.Box
 import net.minecraft.util.math.random.Random
 import net.minecraft.world.LocalDifficulty
@@ -58,6 +59,8 @@ import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import kotlin.collections.ArrayDeque
+import kotlin.collections.HashSet
 
 class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: World) :
     ZombieEntity(entityType, world) {
@@ -235,12 +238,24 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         private const val MIN_DROP_FOR_POTION = 3
         private const val MAX_DROP_DISTANCE = 24
         private const val MAX_DROP_OVERSHOOT = 2
+        private const val VANDAL_VERTICAL_RANGE = 6
+        private const val PLAN_REPLAN_INTERVAL_TICKS = 10L
+        private const val PLAN_REPLAN_DISTANCE_SQ = 9.0
+        private const val PLAN_ORIGIN_DRIFT_SQ = 4.0
+        private val ZERO_VEC = Vec3i(0, 0, 0)
+        private const val HEURISTIC_WEIGHT = 1.04
+        private const val HEURISTIC_SECONDARY = 0.01
+        private const val TURN_PENALTY_HORIZONTAL = 0.25
+        private const val TURN_PENALTY_VERTICAL = 0.15
+        private const val VANDAL_BFS_LIMIT = 4096
+        private const val VANDAL_SCAN_COOLDOWN_TICKS = 20L
 
         fun createAttributes(): DefaultAttributeContainer.Builder =
             createZombieAttributes()
                 .add(EntityAttributes.ZOMBIE_SPAWN_REINFORCEMENTS, 0.0)
                 .add(EntityAttributes.GENERIC_FOLLOW_RANGE, 32.0)
                 .add(EntityAttributes.GENERIC_ATTACK_DAMAGE, 4.0)
+                .add(EntityAttributes.GENERIC_ATTACK_KNOCKBACK, 1.0)
                 .add(EntityAttributes.GENERIC_ARMOR, 2.0)
 
         fun canSpawn(
@@ -419,13 +434,18 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         var g: Double,
         val h: Double,
         var parent: PathNode?,
-        val breaks: List<BlockPos>
+        val breaks: List<BlockPos>,
+        val delta: Vec3i
     ) : Comparable<PathNode> {
         private val f: Double
             get() = g + h
 
         override fun compareTo(other: PathNode): Int {
-            return f.compareTo(other.f).takeIf { it != 0 } ?: h.compareTo(other.h)
+            val fCompare = f.compareTo(other.f)
+            if (fCompare != 0) return fCompare
+            val hCompare = h.compareTo(other.h)
+            if (hCompare != 0) return hCompare
+            return other.g.compareTo(g)
         }
     }
 
@@ -433,7 +453,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
     private fun computeDigPlan(start: BlockPos, target: BlockPos): List<BlockPos>? {
         val openSet = PriorityQueue<PathNode>()
-        val startNode = PathNode(start, 0.0, heuristic(start, target), null, emptyList())
+        val startNode = PathNode(start, 0.0, heuristic(start, target), null, emptyList(), ZERO_VEC)
         openSet.add(startNode)
         val bestCost = mutableMapOf<BlockPos, Double>()
         bestCost[start] = 0.0
@@ -452,7 +472,11 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 if (neighbor.pos in closed) {
                     continue
                 }
-                val tentative = current.g + neighbor.moveCost
+                val dx = neighbor.pos.x - current.pos.x
+                val dy = neighbor.pos.y - current.pos.y
+                val dz = neighbor.pos.z - current.pos.z
+                val delta = Vec3i(dx, dy, dz)
+                val tentative = current.g + neighbor.moveCost + computeTurnPenalty(current.delta, delta)
                 val previousBest = bestCost[neighbor.pos]
                 if (previousBest != null && tentative >= previousBest) {
                     continue
@@ -462,7 +486,8 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                     tentative,
                     heuristic(neighbor.pos, target),
                     current,
-                    neighbor.breaks
+                    neighbor.breaks,
+                    delta
                 )
                 bestCost[neighbor.pos] = tentative
                 openSet.add(node)
@@ -572,7 +597,21 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     }
 
     private fun heuristic(pos: BlockPos, goal: BlockPos): Double {
-        return (abs(goal.x - pos.x) + abs(goal.y - pos.y) + abs(goal.z - pos.z)).toDouble()
+        val dx = (goal.x - pos.x).toDouble()
+        val dy = (goal.y - pos.y).toDouble()
+        val dz = (goal.z - pos.z).toDouble()
+        val euclidean = sqrt(dx * dx + dy * dy + dz * dz)
+        val manhattan = abs(dx) + abs(dy) + abs(dz)
+        return euclidean * HEURISTIC_WEIGHT + manhattan * HEURISTIC_SECONDARY
+    }
+
+    private fun computeTurnPenalty(previous: Vec3i, next: Vec3i): Double {
+        if (next.x == 0 && next.y == 0 && next.z == 0) return 0.0
+        if (previous.x == 0 && previous.y == 0 && previous.z == 0) return 0.0
+        if (previous == next) return 0.0
+        val horizontalPrev = previous.y == 0
+        val horizontalNext = next.y == 0
+        return if (horizontalPrev && horizontalNext) TURN_PENALTY_HORIZONTAL else TURN_PENALTY_VERTICAL
     }
 
     private fun isGoalPosition(pos: BlockPos, goal: BlockPos): Boolean {
@@ -611,14 +650,20 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     private var currentMovementGoal: MovementGoal? = null
     private var currentWaypointIndex: Int = 0
     private var pendingDropPlan: DropPlan? = null
+    private var lastPlanTick: Long = Long.MIN_VALUE
+    private var lastPlanTarget: BlockPos? = null
+    private var lastPlanOrigin: BlockPos? = null
 
     private fun nextDigBlockTowards(from: BlockPos, dest: BlockPos): BlockPos? {
-        if (currentMovementGoal?.targetPos != dest) {
+        if (shouldReplan(from, dest)) {
             if (currentMovementGoal != null) {
                 clearMovementPlan(celebrate = false)
             }
             currentMovementGoal = planMovementTo(dest)
             currentWaypointIndex = 0
+            lastPlanTick = world.time
+            lastPlanTarget = dest
+            lastPlanOrigin = from
         }
 
         currentMovementGoal?.let { goal ->
@@ -646,6 +691,26 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
         pendingDropPlan = null
         return null
+    }
+
+    private fun shouldReplan(from: BlockPos, dest: BlockPos): Boolean {
+        val current = currentMovementGoal ?: return true
+        if (current.targetPos != dest) return true
+
+        val tick = world.time
+        if (tick - lastPlanTick >= PLAN_REPLAN_INTERVAL_TICKS) return true
+
+        val lastTarget = lastPlanTarget
+        if (lastTarget != null && dest.getSquaredDistance(lastTarget) > PLAN_REPLAN_DISTANCE_SQ) {
+            return true
+        }
+
+        val lastOrigin = lastPlanOrigin
+        if (lastOrigin != null && from.getSquaredDistance(lastOrigin) > PLAN_ORIGIN_DRIFT_SQ) {
+            return true
+        }
+
+        return false
     }
 
     private fun prepareVerticalDrop(from: BlockPos, dest: BlockPos): BlockPos? {
@@ -840,6 +905,9 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         currentMovementGoal = null
         currentWaypointIndex = 0
         pendingDropPlan = null
+        lastPlanTarget = null
+        lastPlanOrigin = null
+        lastPlanTick = Long.MIN_VALUE
     }
 
     // --- Tunneling to PLAYER (sticky) -----------------------------------------
@@ -973,18 +1041,35 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         private var miningTicks = 0
         private var ticksPerBlock = 3
         private var lastProgressPos: BlockPos? = null
+        private var nextScanTick: Long = 0
 
         init { setControls(EnumSet.of(Control.MOVE, Control.LOOK)) }
 
         override fun canStart(): Boolean {
             if (miner.hasEnemyTargetInRange()) return false
+            if (world.time < nextScanTick) return false
 
-            vandalTarget = findNearestVandalTarget() ?: return false
-            digPos = miner.nextDigBlockTowards(miner.blockPos, vandalTarget!!)
-            return digPos != null || miner.blockPos.isWithinDistance(
-                Vec3d.ofCenter(vandalTarget!!),
-                MINING_REACH_BLOCKS + 0.1
-            )
+            val target = findNearestVandalTarget() ?: run {
+                nextScanTick = world.time + VANDAL_SCAN_COOLDOWN_TICKS
+                return false
+            }
+            nextScanTick = world.time + VANDAL_SCAN_COOLDOWN_TICKS
+            vandalTarget = target
+
+            val planned = miner.nextDigBlockTowards(miner.blockPos, target)
+            if (planned != null) {
+                digPos = planned
+                return true
+            }
+
+            val center = Vec3d.ofCenter(target)
+            if (miner.blockPos.isWithinDistance(center, MINING_REACH_BLOCKS + 0.1) || lineUnobstructed(target)) {
+                digPos = target
+                return true
+            }
+
+            digPos = null
+            return false
         }
 
         override fun shouldContinue(): Boolean {
@@ -1009,6 +1094,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
             digPos = null
             miningTicks = 0
             miner.clearMovementPlan(celebrate = false)
+            nextScanTick = world.time + VANDAL_SCAN_COOLDOWN_TICKS
         }
 
         override fun tick() {
@@ -1148,27 +1234,45 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
 
         private fun findNearestVandalTarget(): BlockPos? {
-            val r = ENEMY_SEARCH_RANGE.toInt()
             val origin = miner.blockPos
-            var bestPos: BlockPos? = null
-            var bestDistSq = Double.MAX_VALUE
+            val horizontalLimit = ENEMY_SEARCH_RANGE.toInt()
+            val verticalLimit = VANDAL_VERTICAL_RANGE
+            val maxVisited = VANDAL_BFS_LIMIT
+            val queue = ArrayDeque<BlockPos>()
+            val visited = HashSet<BlockPos>()
+            val serverWorld = world as? ServerWorld
 
-            for (y in -2..2) {
-                for (x in -r..r) {
-                    for (z in -r..r) {
-                        val p = origin.add(x, y, z)
-                        val st = world.getBlockState(p)
-                        if (isVandalTarget(st) && miner.isBreakableForMiner(st, p)) {
-                            val dsq = origin.getSquaredDistance(p)
-                            if (dsq < bestDistSq) {
-                                bestDistSq = dsq
-                                bestPos = p
-                            }
-                        }
+            queue.addLast(origin)
+            visited.add(origin)
+
+            var examined = 0
+            while (queue.isNotEmpty() && examined < maxVisited) {
+                val current = queue.removeFirst()
+                examined++
+
+                if (current != origin) {
+                    val state = world.getBlockState(current)
+                    if (miner.isBreakableForMiner(state, current) && isVandalTarget(state)) {
+                        return current
                     }
                 }
+
+                for (dir in Direction.values()) {
+                    val next = current.offset(dir)
+                    if (abs(next.x - origin.x) > horizontalLimit) continue
+                    if (abs(next.z - origin.z) > horizontalLimit) continue
+                    if (abs(next.y - origin.y) > verticalLimit) continue
+                    if (!visited.add(next)) continue
+                    if (serverWorld != null && !serverWorld.isChunkLoaded(next)) continue
+
+                    val nextState = world.getBlockState(next)
+                    if (!nextState.isAir && !miner.isBreakableForMiner(nextState, next)) {
+                        continue
+                    }
+                    queue.addLast(next)
+                }
             }
-            return bestPos
+            return null
         }
 
         private fun isVandalTarget(state: BlockState): Boolean {
@@ -1186,6 +1290,8 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
             // Chests / containers
             if (b === Blocks.CHEST || b === Blocks.TRAPPED_CHEST || b === Blocks.BARREL) return true
+
+            if (state.isIn(BlockTags.BEDS)) return true
 
             if (b === Blocks.COBBLESTONE || b === Blocks.MOSSY_COBBLESTONE) return true
 

@@ -8,6 +8,7 @@ import fuzuki.test.common.entity.SniperSkeletonEntity
 import fuzuki.test.common.entity.SuperCreeperEntity
 import fuzuki.test.common.entity.TntSkeletonEntity
 import fuzuki.test.common.entity.UndeadMinerEntity
+import fuzuki.test.common.entity.PyromaniacEntity
 import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricDefaultAttributeRegistry
 import net.fabricmc.fabric.api.`object`.builder.v1.entity.FabricEntityTypeBuilder
 import net.minecraft.entity.EntityDimensions
@@ -90,6 +91,16 @@ object ModEntityTypes {
             .build()
     )
 
+    val PYROMANIAC: EntityType<PyromaniacEntity> = Registry.register(
+        Registries.ENTITY_TYPE,
+        Identifier.of(MOD_ID, "pyromaniac"),
+        FabricEntityTypeBuilder.create(SpawnGroup.MONSTER, ::PyromaniacEntity)
+            .dimensions(EntityDimensions.fixed(0.6f, 1.95f))
+            .trackRangeBlocks(8)
+            .trackedUpdateRate(3)
+            .build()
+    )
+
     fun register() {
         FabricDefaultAttributeRegistry.register(SUPER_CREEPER, CreeperEntity.createCreeperAttributes())
         FabricDefaultAttributeRegistry.register(MEGA_ZOMBIE, MegaZombieEntity.createMegaZombieAttributes())
@@ -98,5 +109,6 @@ object ModEntityTypes {
         FabricDefaultAttributeRegistry.register(TNT_SKELETON, TntSkeletonEntity.createAttributes())
         FabricDefaultAttributeRegistry.register(SNIPER_SKELETON, SniperSkeletonEntity.createAttributes())
         FabricDefaultAttributeRegistry.register(UNDEAD_MINER, UndeadMinerEntity.createAttributes())
+        FabricDefaultAttributeRegistry.register(PYROMANIAC, PyromaniacEntity.createAttributes())
     }
 }

@@ -13,6 +13,7 @@ import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry
 import net.fabricmc.fabric.api.client.rendering.v1.EntityModelLayerRegistry
 import net.minecraft.client.render.entity.SkeletonEntityRenderer
+import net.minecraft.client.render.entity.ZombieEntityRenderer
 
 class Main : ClientModInitializer {
     override fun onInitializeClient() {
@@ -31,6 +32,9 @@ class Main : ClientModInitializer {
         }
         EntityRendererRegistry.register(ModEntityTypes.ANGRY_PIG, ::AngryPigRenderer)
         EntityRendererRegistry.register(ModEntityTypes.UNDEAD_MINER, ::UndeadMinerRenderer)
+        EntityRendererRegistry.register(ModEntityTypes.PYROMANIAC) { context ->
+            ZombieEntityRenderer(context)
+        }
 
         EntityModelLayerRegistry.registerModelLayer(AngryPigModel.LAYER_LOCATION, AngryPigModel::getTexturedModelData)
         EntityModelLayerRegistry.registerModelLayer(UndeadMinerModel.LAYER, UndeadMinerModel::getTexturedModelData)

@@ -39,12 +39,19 @@ import java.util.EnumSet
 class SniperSkeletonEntity(entityType: EntityType<out SniperSkeletonEntity>, world: World) :
     SkeletonEntity(entityType, world) {
 
+import net.minecraft.util.math.random.Random
+
+class SniperSkeletonEntity(entityType: EntityType<out SniperSkeletonEntity>, world: World) :
+    SkeletonEntity(entityType, world) {
+
+    private var windUpTicks = 0
+
     override fun initGoals() {
         goalSelector.add(0, FleeEntityGoal(this, PlayerEntity::class.java, MIN_COMFORT_DIST, 1.0, FLEE_SPEED_MULT))
         goalSelector.add(1, AvoidSunlightGoal(this))
         goalSelector.add(2, EscapeSunlightGoal(this, 1.0))
 
-        goalSelector.add(3, BowAttackGoal(this as SkeletonEntity, 1.0, 80, FOLLOW_RANGE.toFloat()))
+        goalSelector.add(3, SniperBowAttackGoal(this, 1.0, ATTACK_INTERVAL_TICKS, FOLLOW_RANGE.toFloat()))
         goalSelector.add(4, WanderToHighGroundGoal(this, 1.0))
         goalSelector.add(5, LookAtEntityGoal(this, PlayerEntity::class.java, 30f))
         goalSelector.add(6, LookAroundGoal(this))
@@ -64,54 +71,20 @@ class SniperSkeletonEntity(entityType: EntityType<out SniperSkeletonEntity>, wor
         // no bow usage
     }
 
-    override fun shootAt(target: LivingEntity, pullProgress: Float) {
-        if (world.isClient) return
-        val serverWorld = world as ServerWorld
-
-        val bowStack = getStackInHand(ProjectileUtil.getHandPossiblyHolding(this, Items.BOW))
-        val projectileStack = getProjectileType(bowStack)
-        val projectile = createArrowProjectile(projectileStack, pullProgress, bowStack)
-
-        if (projectile is ArrowEntity) {
-            projectile.damage = 9.0
-            projectile.addEffect(StatusEffectInstance(StatusEffects.BLINDNESS, 40, 0))
-            projectile.addEffect(StatusEffectInstance(StatusEffects.SLOWNESS, 100, 1))
-            projectile.addEffect(StatusEffectInstance(StatusEffects.POISON, 100, 1))
-        }
-
-        val start = Vec3d(x, eyeY - 0.1, z)
-        projectile.setPosition(start.x, start.y, start.z)
-
-        val aimBase = Vec3d(target.x, target.eyeY, target.z)
-        val speed = BASE_ARROW_SPEED * SPEED_MULTIPLIER
-        val toBase = aimBase.subtract(start)
-        val distance = toBase.length()
-        val lead = target.velocity.multiply(distance / speed.toDouble())
-        val aim = aimBase.add(lead)
-
-        val direction = aim.subtract(start)
-        projectile.setVelocity(direction.x, direction.y, direction.z, speed, 0.0f)
-        projectile.isCritical = pullProgress >= 1.0f
-
-        serverWorld.spawnEntity(projectile)
-        serverWorld.playSound(null, blockPos, SoundEvents.ENTITY_ARROW_SHOOT, soundCategory, 1f, 0.8f)
-
-        val rayEnd = raycastForTracer(serverWorld, start, aim, this)
-        spawnTracer(serverWorld, start, rayEnd, 0.5)
-    }
-
     companion object {
-        const val MIN_COMFORT_DIST = 12.0f
+        const val MIN_COMFORT_DIST = 16.0f
         private const val FLEE_SPEED_MULT = 2.0
-        private const val BASE_ARROW_SPEED = 3.0f
-        private const val SPEED_MULTIPLIER = 10.0f
+        private const val BASE_ARROW_SPEED = 6.5f
         private const val FOLLOW_RANGE = 32.0
+        private const val ATTACK_INTERVAL_TICKS = 70
+        private const val WIND_UP_TICKS = 8
 
         fun createAttributes(): DefaultAttributeContainer.Builder =
             AbstractSkeletonEntity.createAbstractSkeletonAttributes()
                 .add(EntityAttributes.GENERIC_MAX_HEALTH, 10.0)
                 .add(EntityAttributes.GENERIC_FOLLOW_RANGE, FOLLOW_RANGE)
-                .add(EntityAttributes.GENERIC_MOVEMENT_SPEED, 0.25)
+                .add(EntityAttributes.GENERIC_MOVEMENT_SPEED, 0.26)
+                .add(EntityAttributes.GENERIC_KNOCKBACK_RESISTANCE, 0.15)
                 .add(EntityAttributes.GENERIC_ATTACK_DAMAGE, 0.0)
     }
 }

@@ -14,6 +14,6 @@ class SuperCreeperEntity(entityType: EntityType<out SuperCreeperEntity>, world: 
     }
 
     companion object {
-        private const val EXPLOSION_RADIUS = 30
+        private const val EXPLOSION_RADIUS = 20
     }
 }
