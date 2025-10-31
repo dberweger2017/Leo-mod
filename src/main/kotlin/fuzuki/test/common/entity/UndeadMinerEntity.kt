@@ -15,6 +15,8 @@ import net.minecraft.entity.data.TrackedDataHandlerRegistry
 import net.minecraft.entity.mob.ZombieEntity
 import net.minecraft.entity.ItemEntity
 import net.minecraft.entity.LivingEntity
+import net.minecraft.entity.effect.StatusEffectInstance
+import net.minecraft.entity.effect.StatusEffects
 import net.minecraft.entity.mob.MobEntity
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.inventory.Inventories
@@ -25,19 +27,22 @@ import net.minecraft.loot.LootTable
 import net.minecraft.nbt.NbtCompound
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.enchantment.Enchantments
+import net.minecraft.fluid.Fluids
 import net.minecraft.registry.tag.BiomeTags
 import net.minecraft.registry.tag.BlockTags
 import net.minecraft.registry.RegistryKeys
 import net.minecraft.registry.RegistryKey
 import net.minecraft.registry.entry.RegistryEntry
 import net.minecraft.server.world.ServerWorld
+import net.minecraft.sound.SoundCategory
+import net.minecraft.sound.SoundEvents
 import net.minecraft.util.Identifier
 import net.minecraft.util.collection.DefaultedList
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
 import net.minecraft.util.math.Box
 import net.minecraft.util.math.random.Random
-import net.minecraft.text.Text
 import net.minecraft.world.LocalDifficulty
 import net.minecraft.world.ServerWorldAccess
 import net.minecraft.world.World
@@ -47,8 +52,11 @@ import net.minecraft.world.GameRules
 import net.minecraft.util.Hand
 import net.minecraft.particle.ParticleTypes
 import java.util.EnumSet
+import java.util.LinkedHashSet
+import java.util.PriorityQueue
 import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: World) :
@@ -74,11 +82,6 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
     private fun debug(msg: String) {
         println("[UndeadMiner] $msg")
-        if (!world.isClient) {
-            world.players.forEach { player ->
-                player.sendMessage(Text.literal("§7[§cMiner§7] §f$msg"), false)
-            }
-        }
     }
 
     private val lootSatchel: DefaultedList<ItemStack> = DefaultedList.ofSize(27, ItemStack.EMPTY)
@@ -147,6 +150,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     private fun isValidEnemyTarget(entity: LivingEntity): Boolean {
         if (entity === this) return false
         if (!entity.isAlive) return false
+        if (entity is UndeadMinerEntity) return false
         if (entity is PlayerEntity && (entity.isSpectator || entity.isCreative)) return false
         if (!canTarget(entity)) return false
         return true
@@ -223,9 +227,14 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         private const val ENEMY_SEARCH_RANGE = 32.0
         private const val MAX_TUNNEL_RANGE_SQ = ENEMY_SEARCH_RANGE * ENEMY_SEARCH_RANGE
         private const val ENEMY_RESCAN_INTERVAL_TICKS = 5L
+        private const val MINING_TICK_FACTOR = 0.2f // 5x faster digging
         private const val MAX_SPAWN_Y = 63
         private const val MINING_REACH_BLOCKS = 4.0
         private const val MINING_REACH_SQ = MINING_REACH_BLOCKS * MINING_REACH_BLOCKS
+        private const val SLOW_FALLING_DURATION_TICKS = 30 * 20
+        private const val MIN_DROP_FOR_POTION = 3
+        private const val MAX_DROP_DISTANCE = 24
+        private const val MAX_DROP_OVERSHOOT = 2
 
         fun createAttributes(): DefaultAttributeContainer.Builder =
             createZombieAttributes()
@@ -373,19 +382,14 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
     private data class MovementGoal(
         val targetPos: BlockPos,
-        val strategy: MovementStrategy,
-        val waypoints: List<BlockPos> = emptyList(),
-        val priority: Double = 0.0
+        val waypoints: MutableList<BlockPos>
     )
 
-    private enum class MovementStrategy {
-        DIRECT_HORIZONTAL,
-        BUILD_STAIRS_UP,
-        DIG_STAIRS_DOWN,
-        VERTICAL_THEN_HORIZONTAL,
-        SPIRAL_ASCENT,
-        BRIDGE_GAP
-    }
+    private data class DropPlan(
+        val breakPos: BlockPos,
+        val distance: Int,
+        val landing: BlockPos
+    )
 
     private fun isSolid(pos: BlockPos): Boolean {
         val state = world.getBlockState(pos)
@@ -393,180 +397,220 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
     }
 
     private fun planMovementTo(target: BlockPos): MovementGoal? {
-        val myPos = blockPos
-        val horizontalDist = sqrt(
-            ((target.x - myPos.x) * (target.x - myPos.x) +
-                (target.z - myPos.z) * (target.z - myPos.z)).toDouble()
-        )
-        val verticalDist = target.y - myPos.y
-
-        debug("Planning movement: horizontal=$horizontalDist, vertical=$verticalDist")
-
-        if (horizontalDist <= 3.0 && kotlin.math.abs(verticalDist) <= 2) {
-            debug("Already in melee range!")
+        val start = blockPos
+        val plan = computeDigPlan(start, target) ?: return null
+        if (plan.isEmpty()) {
             return null
         }
-
-        val goal = when {
-            kotlin.math.abs(verticalDist) <= 1 ->
-                MovementGoal(target, MovementStrategy.DIRECT_HORIZONTAL, planHorizontalPath(myPos, target))
-
-            verticalDist in 2..8 ->
-                MovementGoal(target, MovementStrategy.BUILD_STAIRS_UP, planStaircase(myPos, target))
-
-            verticalDist > 8 ->
-                MovementGoal(target, MovementStrategy.VERTICAL_THEN_HORIZONTAL, planVerticalThenHorizontal(myPos, target))
-
-            verticalDist < -1 ->
-                MovementGoal(target, MovementStrategy.DIG_STAIRS_DOWN, planDownwardPath(myPos, target))
-
-            else -> null
-        }
-
-        if (goal != null && !world.isClient) {
-            val center = Vec3d.ofCenter(myPos)
-            (world as? ServerWorld)?.let { serverWorld ->
-                serverWorld.spawnParticles(
-                    ParticleTypes.POOF,
-                    center.x, center.y + 1.0, center.z,
-                    10, 0.5, 0.5, 0.5, 0.1
-                )
-            }
-            debug("New plan: ${goal.strategy} with ${goal.waypoints.size} waypoints")
-        }
-
-        return goal
-    }
-
-    private fun planHorizontalPath(from: BlockPos, to: BlockPos): List<BlockPos> {
-        val path = mutableListOf<BlockPos>()
-        val dx = Integer.signum(to.x - from.x)
-        val dz = Integer.signum(to.z - from.z)
-
-        var current = from
-        val maxSteps = 32
-        var steps = 0
-
-        while (steps < maxSteps && !isCloseEnoughForMelee(current, to)) {
-            val remainingX = kotlin.math.abs(to.x - current.x)
-            val remainingZ = kotlin.math.abs(to.z - current.z)
-
-            val nextPos = when {
-                remainingX > remainingZ && remainingX > 0 -> current.add(dx, 0, 0)
-                remainingZ > 0 -> current.add(0, 0, dz)
-                remainingX > 0 -> current.add(dx, 0, 0)
-                else -> break
-            }
-
-            if (needsDigging(nextPos)) path.add(nextPos)
-            current = nextPos
-            steps++
-        }
-
-        debug("Horizontal path planned: ${path.size} blocks to dig")
-        return path
-    }
-
-    private fun planStaircase(from: BlockPos, to: BlockPos): List<BlockPos> {
-        val path = mutableListOf<BlockPos>()
-        val dx = Integer.signum(to.x - from.x)
-        val dz = Integer.signum(to.z - from.z)
-
-        var current = from
-        val targetHeight = to.y
-        val maxSteps = 64
-        var steps = 0
-
-        debug("Planning staircase from $from to $to")
-
-        while (steps < maxSteps && current.y < targetHeight && !isCloseEnoughForMelee(current, to)) {
-            val horizontalNext = current.add(
-                if (kotlin.math.abs(to.x - current.x) > 0) dx else 0,
-                0,
-                if (kotlin.math.abs(to.z - current.z) > 0) dz else 0
+        if (!world.isClient) {
+            val center = Vec3d.ofCenter(start)
+            (world as? ServerWorld)?.spawnParticles(
+                ParticleTypes.POOF,
+                center.x, center.y + 1.0, center.z,
+                10, 0.5, 0.5, 0.5, 0.1
             )
-
-            val stairTop = horizontalNext.up()
-
-            addStairStepBlocks(path, current, horizontalNext, stairTop)
-
-            current = stairTop
-            steps++
+            debug("New plan: ${plan.size} dig steps toward $target")
         }
-
-        if (current.y >= targetHeight - 1) {
-            path.addAll(planHorizontalPath(current, to))
-        }
-
-        debug("Staircase planned: ${path.size} blocks to dig, final height: ${current.y}")
-        return path
+        return MovementGoal(target, plan.toMutableList())
     }
 
-    private fun addStairStepBlocks(path: MutableList<BlockPos>, from: BlockPos, horizontalPos: BlockPos, topPos: BlockPos) {
-        if (needsDigging(horizontalPos)) path.add(horizontalPos)
-        if (needsDigging(horizontalPos.up())) path.add(horizontalPos.up())
-        if (needsDigging(topPos)) path.add(topPos)
-        if (needsDigging(topPos.up())) path.add(topPos.up())
+    private data class PathNode(
+        val pos: BlockPos,
+        var g: Double,
+        val h: Double,
+        var parent: PathNode?,
+        val breaks: List<BlockPos>
+    ) : Comparable<PathNode> {
+        private val f: Double
+            get() = g + h
+
+        override fun compareTo(other: PathNode): Int {
+            return f.compareTo(other.f).takeIf { it != 0 } ?: h.compareTo(other.h)
+        }
     }
 
-    private fun planVerticalThenHorizontal(from: BlockPos, to: BlockPos): List<BlockPos> {
-        val path = mutableListOf<BlockPos>()
-        val intermediateHeight = to.y - 2
-        val verticalTarget = BlockPos(from.x, intermediateHeight, from.z)
+    private data class Neighbor(val pos: BlockPos, val moveCost: Double, val breaks: List<BlockPos>)
 
-        path.addAll(planStaircase(from, verticalTarget))
+    private fun computeDigPlan(start: BlockPos, target: BlockPos): List<BlockPos>? {
+        val openSet = PriorityQueue<PathNode>()
+        val startNode = PathNode(start, 0.0, heuristic(start, target), null, emptyList())
+        openSet.add(startNode)
+        val bestCost = mutableMapOf<BlockPos, Double>()
+        bestCost[start] = 0.0
+        val closed = mutableSetOf<BlockPos>()
 
-        val finalTarget = BlockPos(to.x, intermediateHeight, to.z)
-        path.addAll(planHorizontalPath(verticalTarget, finalTarget))
+        while (openSet.isNotEmpty()) {
+            val current = openSet.poll()
+            if (!closed.add(current.pos)) {
+                continue
+            }
+            if (isGoalPosition(current.pos, target)) {
+                return reconstructDigSequence(current)
+            }
 
-        if (to.y > intermediateHeight) {
-            path.addAll(planStaircase(finalTarget, to))
+            for (neighbor in enumerateNeighbors(current.pos, start)) {
+                if (neighbor.pos in closed) {
+                    continue
+                }
+                val tentative = current.g + neighbor.moveCost
+                val previousBest = bestCost[neighbor.pos]
+                if (previousBest != null && tentative >= previousBest) {
+                    continue
+                }
+                val node = PathNode(
+                    neighbor.pos,
+                    tentative,
+                    heuristic(neighbor.pos, target),
+                    current,
+                    neighbor.breaks
+                )
+                bestCost[neighbor.pos] = tentative
+                openSet.add(node)
+            }
         }
-
-        debug("Vertical-then-horizontal: ${path.size} total blocks")
-        return path
+        return null
     }
 
-    private fun planDownwardPath(from: BlockPos, to: BlockPos): List<BlockPos> {
-        val path = mutableListOf<BlockPos>()
-        val dx = Integer.signum(to.x - from.x)
-        val dz = Integer.signum(to.z - from.z)
-
-        var current = from
-        val maxSteps = 32
-        var steps = 0
-
-        while (steps < maxSteps && current.y > to.y && !isCloseEnoughForMelee(current, to)) {
-            val nextDown = current.add(dx, -1, dz)
-
-            if (needsDigging(nextDown)) path.add(nextDown)
-            if (needsDigging(nextDown.up())) path.add(nextDown.up())
-
-            current = nextDown
-            steps++
+    private fun reconstructDigSequence(node: PathNode): List<BlockPos> {
+        val sequences = mutableListOf<List<BlockPos>>()
+        var current: PathNode? = node
+        while (current != null && current.parent != null) {
+            sequences.add(current.breaks)
+            current = current.parent
         }
-
-        if (!isCloseEnoughForMelee(current, to)) {
-            path.addAll(planHorizontalPath(current, to))
+        val ordered = LinkedHashSet<BlockPos>()
+        for (i in sequences.indices.reversed()) {
+            for (pos in sequences[i]) {
+                ordered.add(pos)
+            }
         }
-
-        return path
+        return ordered.toList()
     }
+
+    private fun enumerateNeighbors(current: BlockPos, start: BlockPos): List<Neighbor> {
+        val result = mutableListOf<Neighbor>()
+        val bounds = ENEMY_SEARCH_RANGE.toInt()
+        for (dir in listOf(Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST)) {
+            val horiz = current.relative(dir)
+            if (!withinPlanBounds(horiz, start, bounds)) continue
+
+            val supportBelow = horiz.down()
+            if (isSupport(supportBelow)) {
+                collectMove(current, horiz, 1.0, result)
+            } else {
+                // step down
+                val down = horiz.down()
+                if (withinPlanBounds(down, start, bounds) && isSupport(down.down())) {
+                    collectDescending(current, horiz, down, result)
+                }
+            }
+
+            // step up (onto block in front)
+            val stepBase = horiz
+            val upDest = stepBase.up()
+            if (withinPlanBounds(upDest, start, bounds) && isSupport(stepBase)) {
+                collectAscending(current, stepBase, upDest, result)
+            }
+        }
+        return result
+    }
+
+    private fun collectMove(@Suppress("UNUSED_PARAMETER") current: BlockPos, dest: BlockPos, baseCost: Double, out: MutableList<Neighbor>) {
+        val breaks = mutableListOf<BlockPos>()
+        if (!ensurePassable(dest, breaks)) return
+        if (!ensurePassable(dest.up(), breaks)) return
+        val cost = baseCost + digCost(breaks)
+        out.add(Neighbor(dest, cost, breaks))
+    }
+
+    private fun collectDescending(@Suppress("UNUSED_PARAMETER") current: BlockPos, edge: BlockPos, dest: BlockPos, out: MutableList<Neighbor>) {
+        val breaks = mutableListOf<BlockPos>()
+        if (!ensurePassable(edge, breaks)) return
+        if (!ensurePassable(edge.up(), breaks)) return
+        if (!ensurePassable(dest, breaks)) return
+        if (!ensurePassable(dest.up(), breaks)) return
+        val cost = 1.3 + digCost(breaks)
+        out.add(Neighbor(dest, cost, breaks))
+    }
+
+    private fun collectAscending(@Suppress("UNUSED_PARAMETER") current: BlockPos, stepBase: BlockPos, dest: BlockPos, out: MutableList<Neighbor>) {
+        val breaks = mutableListOf<BlockPos>()
+        if (!ensurePassable(dest, breaks)) return
+        if (!ensurePassable(dest.up(), breaks)) return
+        val cost = 1.5 + digCost(breaks)
+        out.add(Neighbor(dest, cost, breaks))
+    }
+
+    private fun ensurePassable(pos: BlockPos, breaks: MutableList<BlockPos>): Boolean {
+        val state = world.getBlockState(pos)
+        if (state.isAir) {
+            return true
+        }
+        if (!isBreakableForMiner(state, pos)) {
+            return false
+        }
+        if (!breaks.contains(pos)) {
+            breaks.add(pos)
+        }
+        return true
+    }
+
+    private fun digCost(blocks: List<BlockPos>): Double {
+        var cost = 0.0
+        for (pos in blocks) {
+            val state = world.getBlockState(pos)
+            val hardness = state.getHardness(world, pos)
+            cost += 1.0 + (hardness.coerceAtLeast(0f) * 4.0)
+        }
+        return cost
+    }
+
+    private fun withinPlanBounds(pos: BlockPos, origin: BlockPos, radius: Int): Boolean {
+        return abs(pos.x - origin.x) <= radius &&
+            abs(pos.y - origin.y) <= radius &&
+            abs(pos.z - origin.z) <= radius
+    }
+
+    private fun heuristic(pos: BlockPos, goal: BlockPos): Double {
+        return (abs(goal.x - pos.x) + abs(goal.y - pos.y) + abs(goal.z - pos.z)).toDouble()
+    }
+
+    private fun isGoalPosition(pos: BlockPos, goal: BlockPos): Boolean {
+        return pos == goal || pos.distManhattan(goal) <= 1
+    }
+
+    private fun BlockPos.distManhattan(other: BlockPos): Int {
+        return abs(x - other.x) + abs(y - other.y) + abs(z - other.z)
+    }
+
+    private fun BlockPos.relative(direction: Direction): BlockPos {
+        return when (direction) {
+            Direction.NORTH -> this.north()
+            Direction.SOUTH -> this.south()
+            Direction.EAST -> this.east()
+            Direction.WEST -> this.west()
+            Direction.UP -> this.up()
+            Direction.DOWN -> this.down()
+        }
+    }
+
+    private fun isSupport(pos: BlockPos): Boolean {
+        val state = world.getBlockState(pos)
+        if (state.isAir) {
+            return false
+        }
+        return !state.getCollisionShape(world, pos).isEmpty
+    }
+
 
     private fun needsDigging(pos: BlockPos): Boolean {
         val state = world.getBlockState(pos)
         return !state.isAir && isBreakableForMiner(state, pos)
     }
 
-    private fun isCloseEnoughForMelee(pos: BlockPos, target: BlockPos): Boolean {
-        val dx = kotlin.math.abs(target.x - pos.x)
-        val dy = kotlin.math.abs(target.y - pos.y)
-        val dz = kotlin.math.abs(target.z - pos.z)
-        return dx <= 3 && dz <= 3 && dy <= 2
-    }
-
     private var currentMovementGoal: MovementGoal? = null
     private var currentWaypointIndex: Int = 0
+    private var pendingDropPlan: DropPlan? = null
 
     private fun nextDigBlockTowards(from: BlockPos, dest: BlockPos): BlockPos? {
         if (currentMovementGoal?.targetPos != dest) {
@@ -577,47 +621,151 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
             currentWaypointIndex = 0
         }
 
-        val goal = currentMovementGoal ?: return null
-        val waypoints = goal.waypoints
-        if (waypoints.isEmpty()) return null
-
-        while (currentWaypointIndex < waypoints.size) {
-            val nextBlock = waypoints[currentWaypointIndex]
-            if (needsDigging(nextBlock)) {
-                debug("Next dig target: $nextBlock (waypoint ${currentWaypointIndex + 1}/${waypoints.size})")
-                return nextBlock
+        currentMovementGoal?.let { goal ->
+            val waypoints = goal.waypoints
+            if (waypoints.isNotEmpty()) {
+                while (currentWaypointIndex < waypoints.size) {
+                    val nextBlock = waypoints[currentWaypointIndex]
+                    if (needsDigging(nextBlock)) {
+                        pendingDropPlan = null
+                        debug("Next dig target: $nextBlock (waypoint ${currentWaypointIndex + 1}/${waypoints.size})")
+                        return nextBlock
+                    }
+                    currentWaypointIndex++
+                }
+                clearMovementPlan()
+            } else {
+                clearMovementPlan(celebrate = false)
             }
-            currentWaypointIndex++
         }
 
-        clearMovementPlan()
+        val dropTarget = prepareVerticalDrop(from, dest)
+        if (dropTarget != null) {
+            return dropTarget
+        }
+
+        pendingDropPlan = null
         return null
     }
 
-    private fun digTunnelAt(pos: BlockPos) {
-        when (currentMovementGoal?.strategy) {
-            MovementStrategy.BUILD_STAIRS_UP -> digStairStep(pos)
-            MovementStrategy.DIG_STAIRS_DOWN -> digDownwardStep(pos)
-            else -> digStandardTunnel(pos)
+    private fun prepareVerticalDrop(from: BlockPos, dest: BlockPos): BlockPos? {
+        if (dest.y >= from.y) return null
+
+        val breakPos = from.down()
+        val existing = pendingDropPlan
+        if (existing != null && existing.breakPos == breakPos) {
+            return existing.breakPos
         }
+
+        val plan = computeVerticalDrop(from, dest) ?: return null
+        pendingDropPlan = plan
+        debug("Planning vertical drop of ${plan.distance} blocks to landing ${plan.landing}")
+        return plan.breakPos
     }
 
-    private fun digStairStep(pos: BlockPos) {
-        breakBlockServerSide(pos)
-        val up = pos.up()
-        if (isSolid(up)) breakBlockServerSide(up)
+    private fun computeVerticalDrop(from: BlockPos, dest: BlockPos): DropPlan? {
+        if (dest.y >= from.y) return null
+        val breakPos = from.down()
+        val state = world.getBlockState(breakPos)
+        if (!needsDigging(breakPos)) {
+            if (!state.isAir) {
+                return null
+            }
+            return null
+        }
+
+        val dropPlan = evaluateDropDepth(breakPos) ?: return null
+        if (dropPlan.landing.y >= from.y) return null
+        if (dropPlan.landing.y < dest.y - MAX_DROP_OVERSHOOT) return null
+        return dropPlan
     }
 
-    private fun digDownwardStep(pos: BlockPos) {
-        breakBlockServerSide(pos)
-        val up = pos.up()
-        if (isSolid(up)) breakBlockServerSide(up)
+    private fun evaluateDropDepth(breakPos: BlockPos, maxDrop: Int = MAX_DROP_DISTANCE): DropPlan? {
+        val worldBottom = world.bottomY
+        var distance = 1
+        var cursor = breakPos.down()
+
+        while (distance <= maxDrop && cursor.y >= worldBottom) {
+            val state = world.getBlockState(cursor)
+            if (state.isAir) {
+                distance++
+                cursor = cursor.down()
+                continue
+            }
+
+            val fluidState = state.fluidState
+            if (!fluidState.isEmpty) {
+                if (fluidState.fluid === Fluids.LAVA) return null
+                return DropPlan(breakPos, distance, cursor)
+            }
+
+            if (!isSafeLandingBlock(state, cursor)) return null
+            return DropPlan(breakPos, distance, cursor)
+        }
+        return null
+    }
+
+    private fun isSafeLandingBlock(state: BlockState, pos: BlockPos): Boolean {
+        if (!state.fluidState.isEmpty) {
+            return state.fluidState.fluid !== Fluids.LAVA
+        }
+        if (state.isOf(Blocks.CACTUS) || state.isOf(Blocks.MAGMA_BLOCK) ||
+            state.isOf(Blocks.CAMPFIRE) || state.isOf(Blocks.SOUL_CAMPFIRE) ||
+            state.isOf(Blocks.FIRE) || state.isOf(Blocks.SOUL_FIRE)
+        ) {
+            return false
+        }
+        return !state.getCollisionShape(world, pos).isEmpty
+    }
+
+    private fun consumeDropPlanFor(pos: BlockPos): DropPlan? {
+        val plan = pendingDropPlan
+        if (plan != null && plan.breakPos == pos) {
+            pendingDropPlan = null
+            return plan
+        }
+        return null
+    }
+
+    private fun handleDropAfterDig(plan: DropPlan) {
+        if (plan.distance < MIN_DROP_FOR_POTION) return
+        if (world.isClient) return
+        if (hasStatusEffect(StatusEffects.SLOW_FALLING)) return
+
+        val effect = StatusEffectInstance(StatusEffects.SLOW_FALLING, SLOW_FALLING_DURATION_TICKS, 0, false, true, true)
+        addStatusEffect(effect)
+
+        (world as? ServerWorld)?.spawnParticles(
+            ParticleTypes.CLOUD,
+            x, y + 1.0, z,
+            10, 0.35, 0.25, 0.35, 0.02
+        )
+        world.playSound(
+            null,
+            blockPos,
+            SoundEvents.ITEM_BOTTLE_EMPTY,
+            SoundCategory.HOSTILE,
+            0.8f,
+            0.9f + world.random.nextFloat() * 0.2f
+        )
+    }
+
+    private fun digTunnelAt(pos: BlockPos) {
+        digStandardTunnel(pos)
     }
 
     private fun digStandardTunnel(pos: BlockPos) {
         breakBlockServerSide(pos)
         val up = pos.up()
         if (isSolid(up)) breakBlockServerSide(up)
+        val upTwo = up.up()
+        if (isSolid(upTwo)) breakBlockServerSide(upTwo)
+    }
+
+    private fun miningTicksFor(state: BlockState, pos: BlockPos, base: Float, hardnessScale: Float): Int {
+        val hardness = state.getHardness(world, pos).coerceAtLeast(0f)
+        val scaled = (base + hardness * hardnessScale) * MINING_TICK_FACTOR
+        return scaled.roundToInt().coerceAtLeast(1)
     }
 
     private fun visualizeMovementPlan() {
@@ -627,14 +775,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         val waypoints = goal.waypoints
         if (waypoints.isEmpty()) return
 
-        val strategyParticle = when (goal.strategy) {
-            MovementStrategy.DIRECT_HORIZONTAL -> ParticleTypes.SMOKE
-            MovementStrategy.BUILD_STAIRS_UP -> ParticleTypes.FLAME
-            MovementStrategy.DIG_STAIRS_DOWN -> ParticleTypes.DRIPPING_WATER
-            MovementStrategy.VERTICAL_THEN_HORIZONTAL -> ParticleTypes.END_ROD
-            MovementStrategy.SPIRAL_ASCENT -> ParticleTypes.PORTAL
-            MovementStrategy.BRIDGE_GAP -> ParticleTypes.CLOUD
-        }
+        val strategyParticle = ParticleTypes.SMOKE
 
         val startIndex = currentWaypointIndex
         val endIndex = (startIndex + 8).coerceAtMost(waypoints.size)
@@ -681,17 +822,9 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         )
     }
 
-    private fun debugMovementStrategy() {
+    private fun debugMovementPlan() {
         val goal = currentMovementGoal ?: return
-        val strategyName = when (goal.strategy) {
-            MovementStrategy.DIRECT_HORIZONTAL -> "Direct Tunnel"
-            MovementStrategy.BUILD_STAIRS_UP -> "Building Stairs Up"
-            MovementStrategy.DIG_STAIRS_DOWN -> "Digging Down"
-            MovementStrategy.VERTICAL_THEN_HORIZONTAL -> "Vertical→Horizontal"
-            MovementStrategy.SPIRAL_ASCENT -> "Spiral Ascent"
-            MovementStrategy.BRIDGE_GAP -> "Bridge Gap"
-        }
-        debug("$strategyName -> ${goal.targetPos} (${currentWaypointIndex}/${goal.waypoints.size})")
+        debug("Pathing to ${goal.targetPos} (${currentWaypointIndex}/${goal.waypoints.size})")
     }
 
     private fun clearMovementPlan(celebrate: Boolean = true) {
@@ -706,6 +839,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
         currentMovementGoal = null
         currentWaypointIndex = 0
+        pendingDropPlan = null
     }
 
     // --- Tunneling to PLAYER (sticky) -----------------------------------------
@@ -759,7 +893,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 miner.visualizeMovementPlan()
             }
             if (miner.world.time % 60L == 0L) {
-                miner.debugMovementStrategy()
+                miner.debugMovementPlan()
             }
 
             if (digPos == null || world.getBlockState(digPos).isAir) {
@@ -796,6 +930,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
 
             if (miningTicks >= ticksPerBlock) {
                 miner.digTunnelAt(pos)
+                miner.consumeDropPlanFor(pos)?.let { miner.handleDropAfterDig(it) }
                 miningTicks = 0
                 clearCrackProgress()
                 digPos = miner.nextDigBlockTowards(miner.blockPos, target.blockPos)
@@ -811,10 +946,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         }
 
         private fun adjustTicksPerBlock(state: BlockState, pos: BlockPos) {
-            val hardness = state.getHardness(world, pos)
-            val base = 12
-            val scaled = (base + (hardness * 40f)).toInt().coerceAtLeast(5).coerceAtMost(80)
-            ticksPerBlock = scaled
+            ticksPerBlock = miner.miningTicksFor(state, pos, base = 12f, hardnessScale = 40f)
         }
 
         private fun showMiningProgress(pos: BlockPos, elapsed: Int, total: Int) {
@@ -839,7 +971,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
         private var vandalTarget: BlockPos? = null     // the actual vandal block to break
         private var digPos: BlockPos? = null           // current tunnel block along the way
         private var miningTicks = 0
-        private var ticksPerBlock = 15 // a bit faster for vandalizing
+        private var ticksPerBlock = 3
         private var lastProgressPos: BlockPos? = null
 
         init { setControls(EnumSet.of(Control.MOVE, Control.LOOK)) }
@@ -886,7 +1018,7 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 miner.visualizeMovementPlan()
             }
             if (miner.world.time % 60L == 0L) {
-                miner.debugMovementStrategy()
+                miner.debugMovementPlan()
             }
 
             // If we can directly reach the vandal block, go break it
@@ -933,6 +1065,8 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 clearCrackProgress()
                 return
             }
+
+            ticksPerBlock = miner.miningTicksFor(state, pos, base = 10f, hardnessScale = 30f)
 
             // Fixed-ish speed for vandal tunneling
             miningTicks++
@@ -989,12 +1123,15 @@ class UndeadMinerEntity(entityType: EntityType<out UndeadMinerEntity>, world: Wo
                 return
             }
 
+            ticksPerBlock = miner.miningTicksFor(state, pos, base = 8f, hardnessScale = 25f)
+
             // Approach handled earlier; here we just mine
             miningTicks++
             showMiningProgress(pos, miningTicks, ticksPerBlock)
             if (miningTicks % 10 == 0) miner.swingHand(Hand.MAIN_HAND)
             if (miningTicks >= ticksPerBlock) {
                 miner.digTunnelAt(pos)
+                miner.consumeDropPlanFor(pos)?.let { miner.handleDropAfterDig(it) }
                 miningTicks = 0
                 clearCrackProgress()
                 vandalTarget = null // pick a new vandal target next cycle
