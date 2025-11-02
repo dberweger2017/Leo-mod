@@ -15,7 +15,7 @@ import net.minecraft.entity.attribute.DefaultAttributeContainer
 import net.minecraft.entity.attribute.EntityAttributes
 import net.minecraft.entity.damage.DamageSource
 import net.minecraft.entity.mob.MobEntity
-import net.minecraft.entity.mob.PathAwareEntity
+import net.minecraft.entity.mob.HostileEntity
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.entity.passive.VillagerEntity
 import net.minecraft.entity.projectile.ProjectileEntity
@@ -29,7 +29,11 @@ import net.minecraft.world.World
 import net.minecraft.world.ServerWorldAccess
 
 class AngryPigEntity(entityType: EntityType<out AngryPigEntity>, world: World) :
-    PathAwareEntity(entityType, world) {
+    HostileEntity(entityType, world) {
+
+    init {
+        experiencePoints = 5
+    }
 
     override fun initGoals() {
         goalSelector.add(0, SwimGoal(this))
@@ -45,12 +49,10 @@ class AngryPigEntity(entityType: EntityType<out AngryPigEntity>, world: World) :
 
     override fun tryAttack(target: Entity?): Boolean {
         val livingTarget = target as? LivingEntity ?: return super.tryAttack(target)
-        if (handSwinging) return false
-        swingHand(Hand.MAIN_HAND)
-        playSound(SoundEvents.ENTITY_PIG_HURT, 1.0f, 0.9f + random.nextFloat() * 0.2f)
-
         val success = super.tryAttack(livingTarget)
         if (success) {
+            swingHand(Hand.MAIN_HAND)
+            playSound(SoundEvents.ENTITY_PIG_HURT, 1.0f, 0.9f + random.nextFloat() * 0.2f)
             livingTarget.addStatusEffect(StatusEffectInstance(StatusEffects.SLOWNESS, SLOWNESS_DURATION, SLOWNESS_AMPLIFIER))
         }
         return success
@@ -83,7 +85,7 @@ class AngryPigEntity(entityType: EntityType<out AngryPigEntity>, world: World) :
         private const val SLOWNESS_AMPLIFIER = 0
 
         fun createAttributes(): DefaultAttributeContainer.Builder =
-            MobEntity.createMobAttributes()
+            createHostileAttributes()
                 .add(EntityAttributes.GENERIC_MAX_HEALTH, 14.0)
                 .add(EntityAttributes.GENERIC_MOVEMENT_SPEED, 0.35)
                 .add(EntityAttributes.GENERIC_ATTACK_DAMAGE, 5.0)
